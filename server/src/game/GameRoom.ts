@@ -161,6 +161,7 @@ export class GameRoom {
     };
     player.yaw = player.input.yaw;
     player.lastInputAt = Date.now();
+    if ((Math.abs(player.input.forward) > 0.05 || Math.abs(player.input.strafe) > 0.05) && player.pose !== "stand") player.pose = "stand";
   }
 
   private applyPaintStrokes(player: RoomPlayer, strokes: PaintStroke[]): void {
@@ -316,7 +317,7 @@ export class GameRoom {
       if (bot.role === "hider") {
         const box = WORLD_BOXES[Math.floor(Math.random() * WORLD_BOXES.length)];
         if (box) bot.color = box.color;
-        bot.pose = Math.random() > 0.55 ? "blob" : "crouch";
+        bot.pose = Math.random() > 0.55 ? "curl" : "squat";
       }
     }
     this.steerBot(bot, bot.botTarget.x, bot.botTarget.z);
@@ -384,7 +385,7 @@ function sanitizeName(name: string): string {
 }
 
 function isPose(value: unknown): value is Pose {
-  return value === "stand" || value === "crouch" || value === "blob";
+  return value === "stand" || value === "wave" || value === "star" || value === "balance" || value === "squat" || value === "handsHead" || value === "sit" || value === "kneel" || value === "bow" || value === "curl";
 }
 
 function normalizeAngle(value: number): number {

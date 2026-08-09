@@ -33,6 +33,8 @@ const colorInput = element<HTMLInputElement>("#color-input");
 const paintButton = element<HTMLButtonElement>("#paint-button");
 const poseButton = element<HTMLButtonElement>("#pose-button");
 const poseLabel = element<HTMLElement>("#pose-label");
+const poseMenu = element<HTMLElement>("#pose-menu");
+const closePoseMenuButton = element<HTMLButtonElement>("#close-pose-menu");
 const whistleButton = element<HTMLButtonElement>("#whistle-button");
 const lockHint = element<HTMLElement>("#lock-hint");
 const actionHint = element<HTMLElement>("#action-hint");
@@ -64,6 +66,7 @@ let phaseTimeout = 0;
 let inputTimer = 0;
 let toastTimeout = 0;
 let paintMode = false;
+let poseMenuOpen = false;
 let painting = false;
 let orbitingPaintCamera = false;
 let paintColor = "#f5f0df";
@@ -83,7 +86,11 @@ window.setInterval(() => void updateServerStatus(), 15_000);
 playButton.addEventListener("click", () => void startGame());
 colorInput.addEventListener("input", () => selectPaintColor(colorInput.value));
 paintButton.addEventListener("click", togglePaintMode);
-poseButton.addEventListener("click", cyclePose);
+poseButton.addEventListener("click", togglePoseMenu);
+closePoseMenuButton.addEventListener("click", togglePoseMenu);
+for (const poseChoice of document.querySelectorAll<HTMLButtonElement>("[data-pose]")) {
+  poseChoice.addEventListener("click", () => selectPose(poseChoice.dataset.pose as Pose));
+}
 whistleButton.addEventListener("click", whistle);
 donePaintButton.addEventListener("click", togglePaintMode);
 clearPaintButton.addEventListener("click", clearPaint);
@@ -93,6 +100,7 @@ for (const swatch of document.querySelectorAll<HTMLButtonElement>("[data-paint-c
   swatch.addEventListener("click", () => selectPaintColor(swatch.dataset.paintColor ?? paintColor));
 }
 input.onPose = cyclePose;
+input.onTogglePoses = togglePoseMenu;
 input.onWhistle = whistle;
 input.onTogglePaint = togglePaintMode;
 input.onEyedropper = samplePaintColor;
@@ -143,7 +151,7 @@ world.canvas.addEventListener("wheel", (event) => {
 }, { passive: false });
 
 document.addEventListener("pointerlockchange", () => {
-  lockHint.classList.toggle("hidden", paintMode || document.pointerLockElement === world.canvas);
+  lockHint.classList.toggle("hidden", paintMode || poseMenuOpen || document.pointerLockElement === world.canvas);
 });
 
 async function updateServerStatus(): Promise<void> {
@@ -249,8 +257,9 @@ function updateHud(snapshot: ServerSnapshot): void {
   actionHint.textContent = self.role === "hunter" ? "CLICK TO TAG" : self.role === "hider" ? "PRESS F TO PAINT" : "SPECTATING";
   paintSwatch.style.backgroundColor = paintColor;
   paintHex.textContent = paintColor.toUpperCase();
-  poseLabel.textContent = self.pose.toUpperCase();
+  poseLabel.textContent = POSE_LABELS[self.pose];
   if (self.role !== "hider" && paintMode) setPaintMode(false);
+  if (self.role !== "hider" && poseMenuOpen) setPoseMenu(false);
 
   if (snapshot.event) showEvent(snapshot.event);
   if (snapshot.round.phase !== previousPhase) {
@@ -275,6 +284,7 @@ function announcePhase(snapshot: ServerSnapshot): void {
   phaseScreen.classList.remove("hunter-blind");
   if (snapshot.round.phase === "results") {
     if (paintMode) setPaintMode(false);
+    if (poseMenuOpen) setPoseMenu(false);
     phaseScreen.classList.add("hidden");
     results.classList.remove("hidden");
     const huntersWon = snapshot.round.winner === "hunters";
@@ -311,6 +321,7 @@ function togglePaintMode(): void {
 
 function setPaintMode(active: boolean): void {
   const self = world.getSelf();
+  if (active && poseMenuOpen) setPoseMenu(false);
   paintMode = Boolean(active && self?.role === "hider" && self.alive);
   painting = false;
   lastPaintPoint = undefined;
@@ -322,7 +333,31 @@ function setPaintMode(active: boolean): void {
   paintButton.classList.toggle("active", paintMode);
   brushCursor.classList.toggle("hidden", !paintMode);
   if (!paintMode && active) showToast("PAINTING IS ONLY AVAILABLE TO ACTIVE HIDERS");
-  if (!paintMode && !active && document.pointerLockElement !== world.canvas) void world.canvas.requestPointerLock().catch(() => {});
+  if (!paintMode && !active && !poseMenuOpen && document.pointerLockElement !== world.canvas) void world.canvas.requestPointerLock().catch(() => {});
+}
+
+function togglePoseMenu(): void {
+  setPoseMenu(!poseMenuOpen);
+}
+
+function setPoseMenu(active: boolean): void {
+  const self = world.getSelf();
+  if (active && paintMode) setPaintMode(false);
+  poseMenuOpen = Boolean(active && self?.role === "hider" && self.alive);
+  input.setPaintMode(paintMode || poseMenuOpen);
+  poseMenu.classList.toggle("hidden", !poseMenuOpen);
+  poseButton.classList.toggle("active", poseMenuOpen);
+  if (!poseMenuOpen && active) showToast("POSES ARE ONLY AVAILABLE TO ACTIVE HIDERS");
+  if (!poseMenuOpen && !active && !paintMode && document.pointerLockElement !== world.canvas) void world.canvas.requestPointerLock().catch(() => {});
+}
+
+function selectPose(pose: Pose): void {
+  const self = world.getSelf();
+  if (self?.role !== "hider" || !self.alive || !POSES.includes(pose)) return;
+  connection?.send({ type: "pose", pose });
+  poseLabel.textContent = POSE_LABELS[pose];
+  setPoseMenu(false);
+  showToast(`POSE · ${POSE_LABELS[pose]}`);
 }
 
 function paintLineTo(clientX: number, clientY: number): void {
@@ -392,12 +427,8 @@ function setBrushSize(size: number): void {
 function cyclePose(): void {
   const self = world.getSelf();
   if (self?.role !== "hider" || !self.alive) return;
-  const poses: Pose[] = ["stand", "crouch", "blob"];
-  const index = poses.indexOf(self.pose);
-  const pose = poses[(index + 1) % poses.length] ?? "stand";
-  connection?.send({ type: "pose", pose });
-  poseLabel.textContent = pose.toUpperCase();
-  showToast(`SHAPE · ${pose.toUpperCase()}`);
+  const index = POSES.indexOf(self.pose);
+  selectPose(POSES[(index + 1) % POSES.length] ?? "stand");
 }
 
 function whistle(): void {
@@ -455,3 +486,18 @@ window.addEventListener("beforeunload", () => {
   window.clearInterval(inputTimer);
   connection?.close();
 });
+
+const POSES: Pose[] = ["stand", "wave", "star", "balance", "squat", "handsHead", "sit", "kneel", "bow", "curl"];
+
+const POSE_LABELS: Record<Pose, string> = {
+  stand: "STAND",
+  wave: "WAVE",
+  star: "STAR",
+  balance: "BALANCE",
+  squat: "SQUAT",
+  handsHead: "HANDS UP",
+  sit: "SIT",
+  kneel: "KNEEL",
+  bow: "BOW",
+  curl: "CURL"
+};

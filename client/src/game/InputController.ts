@@ -8,6 +8,7 @@ export class InputController {
   private jumpQueued = false;
   onAction?: () => void;
   onPose?: () => void;
+  onTogglePoses?: () => void;
   onWhistle?: () => void;
   onTogglePaint?: () => void;
   onEyedropper?: () => void;
@@ -19,6 +20,7 @@ export class InputController {
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
       if (event.code === "KeyC" && !event.repeat) this.onPose?.();
+      if (event.code === "KeyR" && !event.repeat) this.onTogglePoses?.();
       if (event.code === "KeyF" && !event.repeat) this.onTogglePaint?.();
       if (event.code === "KeyE" && !event.repeat) this.onEyedropper?.();
       if (event.code === "KeyQ" && !event.repeat) this.onWhistle?.();

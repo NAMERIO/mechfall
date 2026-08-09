@@ -67,6 +67,10 @@ The production server hosts the built client and accepts these environment varia
 
 Put the server behind an HTTPS reverse proxy for public hosting so browsers connect over secure WebSockets.
 
+## Credits
+
+The character model is [“meccha chameleon guy”](https://sketchfab.com/3d-models/meccha-chameleon-guy-12df5b42bdc040bba08ff89cbf0c2692) by photon (`Professor_E12`), used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See [client/public/models/ATTRIBUTION.md](client/public/models/ATTRIBUTION.md) for full asset details and pose references.
+
 ## Disclaimer
 
 MECHFALL is an independent prototype inspired by paint based hide and-seek games. It is not affiliated with or endorsed by the developers of *Meccha Chameleon*.

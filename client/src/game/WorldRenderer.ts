@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
   WORLD_BOXES,
   WORLD_SIZE,
@@ -6,6 +8,7 @@ import {
   type PaintStroke,
   type PlayerPaintState,
   type PlayerState,
+  type Pose,
   type ServerSnapshot
 } from "@mechfall/shared";
 import type { InputController } from "./InputController.ts";
@@ -27,12 +30,18 @@ interface Avatar {
   baseColor: string;
   paintSurfaces: Map<PaintPart, PaintSurface>;
   strokes: PaintStroke[];
-  body: THREE.Mesh;
-  head: THREE.Mesh;
-  leftArm: THREE.Mesh;
-  rightArm: THREE.Mesh;
-  leftLeg: THREE.Mesh;
-  rightLeg: THREE.Mesh;
+  procedural: boolean;
+  body?: THREE.Mesh;
+  head?: THREE.Mesh;
+  leftArm?: THREE.Mesh;
+  rightArm?: THREE.Mesh;
+  leftLeg?: THREE.Mesh;
+  rightLeg?: THREE.Mesh;
+  visual?: THREE.Object3D;
+  mixer?: THREE.AnimationMixer;
+  poseClips?: Map<string, THREE.AnimationClip>;
+  activePose?: Pose;
+  walkBones?: Array<{ bone: THREE.Object3D; base: THREE.Quaternion; direction: number; amount: number }>;
   hunterMark: THREE.Group;
   whistleRing: THREE.Mesh;
   state: PlayerState;
@@ -54,6 +63,8 @@ export class WorldRenderer {
   private paintView = false;
   private paintOrbitYaw = 0;
   private paintOrbitPitch = 0;
+  private characterTemplate?: THREE.Group;
+  private characterAnimations: THREE.AnimationClip[] = [];
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -70,6 +81,7 @@ export class WorldRenderer {
     this.scene.fog = new THREE.FogExp2("#b8c4ba", 0.018);
     this.buildLighting();
     this.buildWorld();
+    void this.loadCharacterModel();
     this.resize();
     window.addEventListener("resize", () => this.resize());
     this.animate();
@@ -120,7 +132,7 @@ export class WorldRenderer {
         avatar.baseColor = player.color;
         this.redrawPaint(avatar);
       }
-      for (const surface of avatar.paintSurfaces.values()) surface.material.roughness = player.pose === "blob" ? 0.36 : 0.7;
+      for (const surface of avatar.paintSurfaces.values()) surface.material.roughness = player.pose === "curl" ? 0.36 : 0.7;
       avatar.root.visible = player.alive;
       avatar.hunterMark.visible = player.role === "hunter";
       this.setPose(avatar, player.pose);
@@ -338,7 +350,112 @@ export class WorldRenderer {
     }
   }
 
+  private async loadCharacterModel(): Promise<void> {
+    try {
+      const gltf = await new GLTFLoader().loadAsync("/models/mechfall-character.glb");
+      this.characterTemplate = gltf.scene;
+      this.characterAnimations = gltf.animations;
+
+      // Replace any fallback avatars created while the small GLB was loading.
+      for (const [id, oldAvatar] of [...this.avatars]) {
+        if (!oldAvatar.procedural) continue;
+        const replacement = this.createModelAvatar(oldAvatar.state);
+        replacement.root.position.copy(oldAvatar.root.position);
+        replacement.root.rotation.copy(oldAvatar.root.rotation);
+        replacement.serverPosition.copy(oldAvatar.serverPosition);
+        replacement.target.copy(oldAvatar.target);
+        replacement.strokes = [...oldAvatar.strokes];
+        this.redrawPaint(replacement);
+        this.scene.remove(oldAvatar.root);
+        this.scene.add(replacement.root);
+        this.avatars.set(id, replacement);
+      }
+    } catch (error) {
+      console.warn("Character model failed to load; using the procedural fallback.", error);
+    }
+  }
+
   private createAvatar(state: PlayerState): Avatar {
+    return this.characterTemplate ? this.createModelAvatar(state) : this.createProceduralAvatar(state);
+  }
+
+  private createModelAvatar(state: PlayerState): Avatar {
+    if (!this.characterTemplate) return this.createProceduralAvatar(state);
+    const root = new THREE.Group();
+    const visual = cloneSkeleton(this.characterTemplate);
+    const bounds = new THREE.Box3().setFromObject(visual);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const scale = size.y > 0 ? 2.45 / size.y : 1;
+    visual.scale.setScalar(scale);
+    visual.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+    root.add(visual);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 512;
+    canvas.height = 512;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Canvas 2D painting is unavailable");
+    context.fillStyle = state.color;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.68, metalness: 0.02 });
+    const paintSurfaces = new Map<PaintPart, PaintSurface>();
+    let characterMesh: THREE.Mesh | undefined;
+    visual.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.material = material;
+      child.castShadow = true;
+      child.receiveShadow = true;
+      child.userData.paintPart = "body" satisfies PaintPart;
+      characterMesh ??= child;
+    });
+    if (!characterMesh) throw new Error("Character GLB does not contain a mesh");
+    paintSurfaces.set("body", { mesh: characterMesh, canvas, context, texture, material });
+
+    const hunterMark = new THREE.Group();
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.055, 8, 24), new THREE.MeshBasicMaterial({ color: "#ff594f" }));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 2.68;
+    hunterMark.add(ring);
+    root.add(hunterMark);
+
+    const whistleRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.75, 0.035, 6, 30),
+      new THREE.MeshBasicMaterial({ color: "#fff2a8", transparent: true, opacity: 0.85 })
+    );
+    whistleRing.rotation.x = Math.PI / 2;
+    whistleRing.position.y = 1.25;
+    whistleRing.visible = false;
+    root.add(whistleRing);
+
+    const mixer = new THREE.AnimationMixer(visual);
+    const poseClips = new Map(this.characterAnimations.map((clip) => [clip.name, clip]));
+    const avatar: Avatar = {
+      root,
+      serverPosition: root.position.clone(),
+      target: root.position.clone(),
+      snapshotReceivedAt: performance.now(),
+      targetYaw: state.yaw,
+      baseColor: state.color,
+      paintSurfaces,
+      strokes: this.pendingPaint.get(state.id) ?? [],
+      procedural: false,
+      visual,
+      mixer,
+      poseClips,
+      hunterMark,
+      whistleRing,
+      state
+    };
+    this.pendingPaint.delete(state.id);
+    this.setPose(avatar, state.pose, true);
+    this.redrawPaint(avatar);
+    return avatar;
+  }
+
+  private createProceduralAvatar(state: PlayerState): Avatar {
     const root = new THREE.Group();
     const paintSurfaces = new Map<PaintPart, PaintSurface>();
     const makePaintedMesh = (part: PaintPart, geometry: THREE.BufferGeometry): THREE.Mesh => {
@@ -411,6 +528,7 @@ export class WorldRenderer {
       baseColor: state.color,
       paintSurfaces,
       strokes: this.pendingPaint.get(state.id) ?? [],
+      procedural: true,
       body,
       head,
       leftArm,
@@ -459,20 +577,48 @@ export class WorldRenderer {
     surface.texture.needsUpdate = true;
   }
 
-  private setPose(avatar: Avatar, pose: PlayerState["pose"]): void {
-    const isBlob = pose === "blob";
-    const isCrouch = pose === "crouch";
-    avatar.body.scale.set(isBlob ? 1.35 : 1, isBlob ? 0.62 : isCrouch ? 0.72 : 1, isBlob ? 1.35 : 1);
-    avatar.body.position.y = isBlob ? 0.56 : isCrouch ? 0.82 : 1.1;
-    avatar.head.position.y = isBlob ? 0.77 : isCrouch ? 1.47 : 2.05;
-    avatar.head.scale.setScalar(isBlob ? 0.72 : 1);
-    avatar.leftArm.visible = !isBlob;
-    avatar.rightArm.visible = !isBlob;
-    avatar.leftLeg.visible = !isBlob;
-    avatar.rightLeg.visible = !isBlob;
-    avatar.leftLeg.position.y = isCrouch ? 0.25 : 0.42;
-    avatar.rightLeg.position.y = isCrouch ? 0.25 : 0.42;
-    avatar.hunterMark.position.y = isCrouch ? -0.45 : isBlob ? -1.15 : 0;
+  private setPose(avatar: Avatar, pose: PlayerState["pose"], force = false): void {
+    if (!avatar.procedural) {
+      if (!force && avatar.activePose === pose) return;
+      avatar.activePose = pose;
+      avatar.mixer?.stopAllAction();
+      const clip = avatar.poseClips?.get(POSE_CLIPS[pose]);
+      if (clip && avatar.mixer) {
+        const action = avatar.mixer.clipAction(clip);
+        action.reset().setLoop(THREE.LoopOnce, 1).play();
+        action.time = clip.duration;
+        action.paused = true;
+        avatar.mixer.update(0);
+      }
+      if (pose === "stand" && avatar.visual) {
+        avatar.walkBones = [
+          ["thigh.L_22", 1, 1],
+          ["thigh.R_27", -1, 1],
+          ["upper_arm.L_5", -1, 0.7],
+          ["upper_arm.R_11", 1, 0.7]
+        ].flatMap(([name, direction, amount]) => {
+          const bone = avatar.visual?.getObjectByName(String(name));
+          return bone ? [{ bone, base: bone.quaternion.clone(), direction: Number(direction), amount: Number(amount) }] : [];
+        });
+      }
+      return;
+    }
+
+    const { body, head, leftArm, rightArm, leftLeg, rightLeg } = avatar;
+    if (!body || !head || !leftArm || !rightArm || !leftLeg || !rightLeg) return;
+    const compact = pose === "squat" || pose === "sit" || pose === "kneel" || pose === "curl";
+    const curled = pose === "curl";
+    body.scale.set(curled ? 1.35 : 1, curled ? 0.62 : compact ? 0.76 : 1, curled ? 1.35 : 1);
+    body.position.y = curled ? 0.56 : compact ? 0.86 : 1.1;
+    head.position.y = curled ? 0.77 : compact ? 1.5 : 2.05;
+    head.scale.setScalar(curled ? 0.72 : 1);
+    leftArm.visible = !curled;
+    rightArm.visible = !curled;
+    leftLeg.visible = !curled;
+    rightLeg.visible = !curled;
+    leftLeg.position.y = compact ? 0.25 : 0.42;
+    rightLeg.position.y = compact ? 0.25 : 0.42;
+    avatar.hunterMark.position.y = compact ? -0.4 : curled ? -1.1 : 0;
   }
 
   private animate = (): void => {
@@ -500,10 +646,17 @@ export class WorldRenderer {
       const moving = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z) > 0.3;
       const stride = moving ? Math.sin(elapsed * 12) * 0.48 : 0;
       if (avatar.state.pose === "stand") {
-        avatar.leftLeg.rotation.x = stride;
-        avatar.rightLeg.rotation.x = -stride;
-        avatar.leftArm.rotation.x = -stride * 0.65;
-        avatar.rightArm.rotation.x = stride * 0.65;
+        if (avatar.procedural && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
+          avatar.leftLeg.rotation.x = stride;
+          avatar.rightLeg.rotation.x = -stride;
+          avatar.leftArm.rotation.x = -stride * 0.65;
+          avatar.rightArm.rotation.x = stride * 0.65;
+        } else {
+          for (const walkBone of avatar.walkBones ?? []) {
+            walkBone.bone.quaternion.copy(walkBone.base);
+            if (moving) walkBone.bone.rotateX(stride * walkBone.direction * walkBone.amount);
+          }
+        }
       }
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
       if (avatar.whistleRing.visible) {
@@ -520,7 +673,7 @@ export class WorldRenderer {
       const yaw = inputYaw + (this.paintView ? this.paintOrbitYaw : 0);
       const pitch = (this.input?.pitch ?? -0.2) + (this.paintView ? this.paintOrbitPitch : 0);
       const distance = 5.4;
-      const target = focus.root.position.clone().add(new THREE.Vector3(0, focus.state.pose === "blob" ? 0.85 : 1.35, 0));
+      const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose], 0));
       const horizontal = Math.cos(pitch) * distance;
       const desired = target.clone().add(new THREE.Vector3(Math.sin(yaw) * horizontal, 1.2 + Math.sin(-pitch) * distance, Math.cos(yaw) * horizontal));
       this.camera.position.lerp(desired, 1 - Math.exp(-12 * dt));
@@ -544,3 +697,29 @@ export class WorldRenderer {
 function shortestAngle(from: number, to: number): number {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
+
+const POSE_CLIPS: Record<Pose, string> = {
+  stand: "Pose9",
+  wave: "Pose17",
+  star: "Pose18",
+  balance: "Pose13",
+  squat: "Pose19",
+  handsHead: "Pose10",
+  sit: "Pose15",
+  kneel: "Pose14",
+  bow: "Pose11",
+  curl: "Pose12"
+};
+
+const POSE_CAMERA_HEIGHT: Record<Pose, number> = {
+  stand: 1.35,
+  wave: 1.35,
+  star: 1.35,
+  balance: 1.25,
+  squat: 0.95,
+  handsHead: 1.45,
+  sit: 0.9,
+  kneel: 1,
+  bow: 1,
+  curl: 0.7
+};

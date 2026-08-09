@@ -84,7 +84,7 @@
         <div class="paint-readout"><i id="paint-swatch"></i><span><small>ACTIVE COAT</small><strong id="paint-hex">#F5F0DF</strong></span></div>
         <label><span>CUSTOM</span><input id="color-input" type="color" value="#f5f0df" /></label>
         <button id="paint-button"><kbd>F</kbd><span>PAINT</span></button>
-        <button id="pose-button"><kbd>C</kbd><span id="pose-label">STAND</span></button>
+        <button id="pose-button"><kbd>R</kbd><span id="pose-label">POSES</span></button>
         <button id="whistle-button"><kbd>Q</kbd><span>WHISTLE</span></button>
       </section>
 
@@ -109,6 +109,23 @@
           <button id="clear-paint-button" class="tool-button"><b>↺</b><span>CLEAR</span><small>START OVER</small></button>
           <button id="done-paint-button" class="done-paint-button">DONE PAINTING <kbd>F</kbd></button>
         </div>
+      </section>
+
+      <section id="pose-menu" class="pose-menu panel-lite hidden">
+        <header><span>BODY SHAPES</span><strong>CHOOSE A POSE</strong><small>Moving releases the pose</small></header>
+        <div class="pose-grid">
+          <button data-pose="stand"><b>↑</b><span>STAND</span></button>
+          <button data-pose="wave"><b>⌁</b><span>WAVE</span></button>
+          <button data-pose="star"><b>✦</b><span>STAR</span></button>
+          <button data-pose="balance"><b>／</b><span>BALANCE</span></button>
+          <button data-pose="squat"><b>⌄</b><span>SQUAT</span></button>
+          <button data-pose="handsHead"><b>○</b><span>HANDS UP</span></button>
+          <button data-pose="sit"><b>⌑</b><span>SIT</span></button>
+          <button data-pose="kneel"><b>⌞</b><span>KNEEL</span></button>
+          <button data-pose="bow"><b>⌝</b><span>BOW</span></button>
+          <button data-pose="curl"><b>●</b><span>CURL</span></button>
+        </div>
+        <button id="close-pose-menu" class="close-pose-menu">CLOSE <kbd>R</kbd></button>
       </section>
 
       <div id="lock-hint" class="lock-hint">CLICK TO CAPTURE MOUSE</div>

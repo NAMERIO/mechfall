@@ -713,6 +713,7 @@ export class WorldRenderer {
     requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const elapsed = this.clock.elapsedTime;
+    this.input?.updateCamera(dt);
 
     const renderTime = performance.now();
     for (const [id, avatar] of this.avatars) {
@@ -776,8 +777,8 @@ export class WorldRenderer {
     const focus = selfAvatar?.state.alive ? selfAvatar : [...this.avatars.values()].find((avatar) => avatar.state.alive) ?? selfAvatar;
     if (focus) {
       const inputYaw = this.input?.yaw ?? focus.state.yaw;
-      const yaw = inputYaw + (this.paintView ? this.paintOrbitYaw : 0);
-      const pitch = (this.input?.pitch ?? -0.2) + (this.paintView ? this.paintOrbitPitch : 0);
+      const yaw = inputYaw + (this.input?.cameraYawOffset ?? 0) + (this.paintView ? this.paintOrbitYaw : 0);
+      const pitch = (this.input?.pitch ?? -0.2) + (this.input?.cameraPitchOffset ?? 0) + (this.paintView ? this.paintOrbitPitch : 0);
       const distance = 5.4;
       const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose], 0));
       const horizontal = Math.cos(pitch) * distance;

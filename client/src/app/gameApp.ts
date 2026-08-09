@@ -162,7 +162,7 @@ window.addEventListener("pointerup", () => {
   orbitingPaintCamera = false;
 });
 world.canvas.addEventListener("contextmenu", (event) => {
-  if (paintMode) event.preventDefault();
+  event.preventDefault();
 });
 world.canvas.addEventListener("wheel", (event) => {
   if (!paintMode) return;

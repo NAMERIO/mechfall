@@ -15,11 +15,15 @@ export class InputController {
   onTogglePaint?: () => void;
   onEyedropper?: () => void;
   private paintMode = false;
-  private freeLooking = false;
+  private mouseMode?: "camera" | "body";
+  private mouseButton?: 0 | 2;
+  private mouseDownAt = 0;
+  private mouseTravel = 0;
+  private bodyFacingStarted = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (event) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space"].includes(event.code)) event.preventDefault();
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"].includes(event.code)) event.preventDefault();
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
       if (event.code === "KeyC" && !event.repeat) this.onPose?.();
@@ -27,87 +31,108 @@ export class InputController {
       if (event.code === "KeyF" && !event.repeat) this.onTogglePaint?.();
       if (event.code === "KeyE" && !event.repeat) this.onEyedropper?.();
       if (event.code === "KeyQ" && !event.repeat) this.onWhistle?.();
+      if (event.code === "Escape") this.cancelMouseGesture();
     });
     window.addEventListener("keyup", (event) => this.keys.delete(event.code));
     window.addEventListener("blur", () => {
       this.keys.clear();
-      this.freeLooking = false;
+      this.jumpQueued = false;
+      this.cancelMouseGesture();
     });
     document.addEventListener("mousemove", (event) => {
+      if (!this.mouseMode) return;
+      this.mouseTravel += Math.hypot(event.movementX, event.movementY);
       if (document.pointerLockElement !== this.canvas) return;
-      if (this.freeLooking) {
+      if (this.mouseMode === "camera") {
         this.cameraYawOffset = normalizeAngle(this.cameraYawOffset - event.movementX * 0.0022);
         const cameraPitch = Math.max(-0.85, Math.min(0.48, this.pitch + this.cameraPitchOffset - event.movementY * 0.0018));
         this.cameraPitchOffset = cameraPitch - this.pitch;
         return;
       }
+      if (!this.bodyFacingStarted) {
+        if (this.mouseTravel <= MAX_CLICK_TRAVEL) return;
+        this.yaw = normalizeAngle(this.yaw + this.cameraYawOffset);
+        this.pitch = Math.max(-0.85, Math.min(0.48, this.pitch + this.cameraPitchOffset));
+        this.cameraYawOffset = 0;
+        this.cameraPitchOffset = 0;
+        this.bodyFacingStarted = true;
+      }
       this.yaw = normalizeAngle(this.yaw - event.movementX * 0.0022);
       this.pitch = Math.max(-0.85, Math.min(0.48, this.pitch - event.movementY * 0.0018));
     });
     this.canvas.addEventListener("mousedown", (event) => {
-      if (this.paintMode) return;
-      if (event.button === 2) {
-        event.preventDefault();
-        this.freeLooking = true;
-        if (document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock();
-        return;
-      }
-      if (event.button !== 0) return;
-      if (document.pointerLockElement !== this.canvas) {
-        void this.canvas.requestPointerLock();
-      } else if (!this.freeLooking) {
-        this.onAction?.();
-      }
+      if (this.paintMode || (event.button !== 0 && event.button !== 2)) return;
+      event.preventDefault();
+      if (this.mouseMode) return;
+      this.mouseMode = event.button === 0 ? "body" : "camera";
+      this.mouseButton = event.button;
+      this.mouseDownAt = performance.now();
+      this.mouseTravel = 0;
+      this.bodyFacingStarted = false;
+      if (document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock().catch(() => {});
     });
     window.addEventListener("mouseup", (event) => {
-      if (event.button === 2) this.freeLooking = false;
+      if (event.button === this.mouseButton) this.finishMouseGesture(true);
     });
     document.addEventListener("pointerlockchange", () => {
-      if (document.pointerLockElement !== this.canvas) {
-        this.freeLooking = false;
-        this.cameraYawOffset = 0;
-        this.cameraPitchOffset = 0;
-      }
+      if (document.pointerLockElement === this.canvas && !this.mouseMode) document.exitPointerLock();
+      if (document.pointerLockElement !== this.canvas && this.mouseMode) this.finishMouseGesture(false);
     });
   }
 
   snapshot(): InputPayload {
     if (this.paintMode) {
       this.jumpQueued = false;
-      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, yaw: this.yaw };
+      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: this.yaw };
     }
     const forward = Number(this.keys.has("KeyW")) - Number(this.keys.has("KeyS"));
     const strafe = Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA"));
     const jump = this.jumpQueued;
     const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const climbUp = this.keys.has("Space");
+    const climbDown = sprint;
+    const climb = Number(climbUp) - Number(climbDown);
     this.jumpQueued = false;
-    return { sequence: ++this.sequence, forward, strafe, jump, sprint, yaw: this.yaw };
+    return { sequence: ++this.sequence, forward, strafe, jump, sprint, climb, detach: false, yaw: this.yaw };
   }
 
   aim(): { yaw: number; pitch: number } {
-    return { yaw: this.yaw, pitch: this.pitch };
-  }
-
-  updateCamera(dt: number): void {
-    if (this.freeLooking) return;
-    const recenter = Math.exp(-9 * dt);
-    this.cameraYawOffset *= recenter;
-    this.cameraPitchOffset *= recenter;
-    if (Math.abs(this.cameraYawOffset) < 0.0001) this.cameraYawOffset = 0;
-    if (Math.abs(this.cameraPitchOffset) < 0.0001) this.cameraPitchOffset = 0;
+    return {
+      yaw: normalizeAngle(this.yaw + this.cameraYawOffset),
+      pitch: Math.max(-0.85, Math.min(0.48, this.pitch + this.cameraPitchOffset))
+    };
   }
 
   setPaintMode(active: boolean): void {
     this.paintMode = active;
-    this.freeLooking = false;
-    this.cameraYawOffset = 0;
-    this.cameraPitchOffset = 0;
     this.keys.clear();
     this.jumpQueued = false;
-    if (active && document.pointerLockElement === this.canvas) document.exitPointerLock();
+    this.cancelMouseGesture();
+  }
+
+  private finishMouseGesture(allowAction: boolean): void {
+    const mode = this.mouseMode;
+    const shouldAct = allowAction
+      && mode === "body"
+      && performance.now() - this.mouseDownAt <= MAX_CLICK_DURATION_MS
+      && this.mouseTravel <= MAX_CLICK_TRAVEL;
+    this.mouseMode = undefined;
+    this.mouseButton = undefined;
+    this.mouseDownAt = 0;
+    this.mouseTravel = 0;
+    this.bodyFacingStarted = false;
+    if (document.pointerLockElement === this.canvas) document.exitPointerLock();
+    if (shouldAct) this.onAction?.();
+  }
+
+  private cancelMouseGesture(): void {
+    this.finishMouseGesture(false);
   }
 }
 
 function normalizeAngle(value: number): number {
   return Math.atan2(Math.sin(value), Math.cos(value));
 }
+
+const MAX_CLICK_DURATION_MS = 250;
+const MAX_CLICK_TRAVEL = 5;

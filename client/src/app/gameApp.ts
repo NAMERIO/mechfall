@@ -37,7 +37,7 @@ const poseLabel = element<HTMLElement>("#pose-label");
 const poseMenu = element<HTMLElement>("#pose-menu");
 const closePoseMenuButton = element<HTMLButtonElement>("#close-pose-menu");
 const whistleButton = element<HTMLButtonElement>("#whistle-button");
-const lockHint = element<HTMLElement>("#lock-hint");
+const crosshair = element<HTMLElement>("#crosshair");
 const actionHint = element<HTMLElement>("#action-hint");
 const toast = element<HTMLElement>("#toast");
 const eventFeed = element<HTMLElement>("#event-feed");
@@ -132,8 +132,6 @@ input.onAction = () => {
     connection?.send({ type: "shoot", ...input.aim() });
     world.flashShot();
     playShotSound();
-  } else if (self.role === "hider") {
-    showToast("PRESS F TO OPEN CHROMA STUDIO");
   }
 };
 
@@ -168,14 +166,13 @@ world.canvas.addEventListener("contextmenu", (event) => {
   event.preventDefault();
 });
 world.canvas.addEventListener("wheel", (event) => {
-  if (!paintMode) return;
   event.preventDefault();
-  setBrushSize(brushSize + (event.deltaY > 0 ? -0.01 : 0.01));
+  if (paintMode) {
+    setBrushSize(brushSize + (event.deltaY > 0 ? -0.01 : 0.01));
+  } else {
+    world.zoomCamera(event.deltaY);
+  }
 }, { passive: false });
-
-document.addEventListener("pointerlockchange", () => {
-  lockHint.classList.toggle("hidden", paintMode || poseMenuOpen || document.pointerLockElement === world.canvas);
-});
 
 async function updateServerStatus(): Promise<void> {
   try {
@@ -259,7 +256,10 @@ function handleMessage(message: ServerMessage): void {
 
 function updateHud(snapshot: ServerSnapshot): void {
   const self = snapshot.players.find((player) => player.id === snapshot.selfId);
-  if (!self) return;
+  if (!self) {
+    crosshair.classList.add("hidden");
+    return;
+  }
   const now = Date.now();
   const remaining = Math.max(0, snapshot.round.endsAt - now);
   const seconds = Math.ceil(remaining / 1_000);
@@ -276,20 +276,32 @@ function updateHud(snapshot: ServerSnapshot): void {
   score.textContent = String(self.score).padStart(4, "0");
 
   const isLobbyOwner = snapshot.round.phase === "waiting" && snapshot.ownerId === snapshot.selfId;
+  const canShoot = self.alive && self.role === "hunter" && snapshot.round.phase === "hunting";
+  crosshair.classList.toggle("hidden", !canShoot);
   const displayRole = isLobbyOwner ? "GAME OWNER" : snapshot.round.phase === "waiting" ? "PLAYER" : self.role === "spectator" ? "SPECTATING" : self.role.toUpperCase();
   roleLabel.textContent = displayRole;
   roleIcon.textContent = isLobbyOwner ? "★" : self.role === "hunter" ? "⌖" : self.role === "hider" ? "◈" : "◎";
-  roleTip.textContent = snapshot.round.phase === "waiting"
+  roleTip.textContent = self.cling
+    ? "Attached · Hold LMB to face · Hold RMB to orbit · Space up · Shift down · A/D sideways · S/away to leave"
+    : snapshot.round.phase === "waiting"
     ? isLobbyOwner ? "You control when the next round starts" : "The game owner controls the start"
     : self.role === "hunter"
-    ? "Keep targets centered and click to fire the shotgun"
+    ? canShoot ? "Click LMB to fire · hold LMB to face · hold RMB to orbit · wheel to zoom" : "Shotgun locked · hold LMB to face · hold RMB to orbit"
     : self.role === "hider"
-      ? "Press F and hand-paint your camouflage"
+      ? "Hold LMB to face · hold RMB to orbit · press F to paint · wheel to zoom"
       : "You rejoin when the next round begins";
   paintPanel.classList.toggle("hidden", self.role !== "hider");
-  actionHint.textContent = snapshot.round.phase === "waiting"
+  actionHint.textContent = self.cling
+    ? "SPACE UP · SHIFT DOWN · A/D SIDEWAYS · S/AWAY RELEASE"
+    : snapshot.round.phase === "waiting"
     ? isLobbyOwner ? "START WHEN EVERYONE IS READY" : "WAITING FOR GAME OWNER"
-    : self.role === "hunter" ? "CLICK TO FIRE" : self.role === "hider" ? "PRESS F TO PAINT" : "SPECTATING";
+    : canShoot
+      ? "LMB CLICK FIRE · LMB HOLD FACE · RMB HOLD ORBIT · WHEEL ZOOM"
+      : self.role === "hunter"
+        ? "SHOTGUN LOCKED · LMB HOLD FACE · RMB HOLD ORBIT"
+        : self.role === "hider"
+          ? "LMB HOLD FACE · RMB HOLD ORBIT · F PAINT · WHEEL ZOOM"
+          : "SPECTATING · RMB HOLD ORBIT · WHEEL ZOOM";
   paintSwatch.style.backgroundColor = paintColor;
   paintHex.textContent = paintColor.toUpperCase();
   poseLabel.textContent = POSE_LABELS[self.pose];
@@ -406,8 +418,8 @@ function setPaintMode(active: boolean): void {
   hud.classList.toggle("painting", paintMode);
   paintButton.classList.toggle("active", paintMode);
   brushCursor.classList.toggle("hidden", !paintMode);
+  world.canvas.classList.toggle("paint-cursor", paintMode);
   if (!paintMode && active) showToast("PAINTING IS ONLY AVAILABLE TO ACTIVE HIDERS");
-  if (!paintMode && !active && !poseMenuOpen && document.pointerLockElement !== world.canvas) void world.canvas.requestPointerLock().catch(() => {});
 }
 
 function togglePoseMenu(): void {
@@ -422,7 +434,6 @@ function setPoseMenu(active: boolean): void {
   poseMenu.classList.toggle("hidden", !poseMenuOpen);
   poseButton.classList.toggle("active", poseMenuOpen);
   if (!poseMenuOpen && active) showToast("POSES ARE ONLY AVAILABLE TO ACTIVE HIDERS");
-  if (!poseMenuOpen && !active && !paintMode && document.pointerLockElement !== world.canvas) void world.canvas.requestPointerLock().catch(() => {});
 }
 
 function selectPose(pose: Pose): void {

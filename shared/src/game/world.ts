@@ -8,12 +8,13 @@ export interface WorldBox {
 }
 
 export const WORLD_SIZE = 42;
+export const WORLD_WALL_THICKNESS = 1;
 
 export const WORLD_BOXES: readonly WorldBox[] = [
-  { id: "north", position: [0, 2.5, -21], size: [43, 5, 1], color: "#de704e", kind: "wall", solid: true },
-  { id: "south", position: [0, 2.5, 21], size: [43, 5, 1], color: "#50a89b", kind: "wall", solid: true },
-  { id: "west", position: [-21, 2.5, 0], size: [1, 5, 43], color: "#e9b949", kind: "wall", solid: true },
-  { id: "east", position: [21, 2.5, 0], size: [1, 5, 43], color: "#466c99", kind: "wall", solid: true },
+  { id: "north", position: [0, 2.5, -21], size: [43, 5, WORLD_WALL_THICKNESS], color: "#de704e", kind: "wall", solid: true },
+  { id: "south", position: [0, 2.5, 21], size: [43, 5, WORLD_WALL_THICKNESS], color: "#50a89b", kind: "wall", solid: true },
+  { id: "west", position: [-21, 2.5, 0], size: [WORLD_WALL_THICKNESS, 5, 43], color: "#e9b949", kind: "wall", solid: true },
+  { id: "east", position: [21, 2.5, 0], size: [WORLD_WALL_THICKNESS, 5, 43], color: "#466c99", kind: "wall", solid: true },
   { id: "center-red", position: [-4.5, 1.5, -1], size: [5, 3, 2], color: "#d9564a", kind: "crate", solid: true },
   { id: "center-blue", position: [3.5, 1, 2], size: [3, 2, 4], color: "#4778a8", kind: "crate", solid: true },
   { id: "yellow-stack-a", position: [11, 1, -10], size: [4, 2, 3], color: "#e7b844", kind: "crate", solid: true },

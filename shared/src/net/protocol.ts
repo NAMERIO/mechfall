@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 export const MAX_GAME_PACKET_BYTES = 16_384;
 export const MAX_PAINT_STROKES_PER_PACKET = 32;
 
@@ -18,7 +18,9 @@ export const GAME = {
   crouchSpeed: 3.2,
   jumpSpeed: 7.3,
   gravity: 20,
-  playerRadius: 0.48,
+  climbSpeed: 3.4,
+  playerHalfWidth: 0.5,
+  playerHalfDepth: 0.14,
   shotgunRange: 28,
   shotgunCooldownMs: 850,
   whistleCooldownMs: 12_000,
@@ -89,6 +91,13 @@ export interface PlayerState {
   score: number;
   tags: number;
   whistlingUntil: number;
+  cling?: SurfaceClingState;
+}
+
+export interface SurfaceClingState {
+  surfaceId: string;
+  normalX: number;
+  normalZ: number;
 }
 
 export interface RoundState {
@@ -122,6 +131,8 @@ export interface InputPayload {
   strafe: number;
   jump: boolean;
   sprint: boolean;
+  climb?: number;
+  detach?: boolean;
   yaw: number;
 }
 

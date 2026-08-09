@@ -19,6 +19,23 @@ test("websocket packets use a stable leading message type", () => {
   assert.deepEqual(decodeClientMessage(packet), hello);
 });
 
+test("wall movement intent round-trips through the multiplayer codec", () => {
+  const input = {
+    type: "input",
+    input: {
+      sequence: 42,
+      forward: 0,
+      strafe: 1,
+      jump: false,
+      sprint: true,
+      climb: -1,
+      detach: false,
+      yaw: Math.PI / 2
+    }
+  } as const;
+  assert.deepEqual(decodeClientMessage(encodeClientMessage(input)), input);
+});
+
 test("websocket decoder rejects a payload with a forged type byte", () => {
   const packet = encodeClientMessage({ type: "ping", sentAt: 123 });
   packet[0] = WsPacketType.Shoot;

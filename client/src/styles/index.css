@@ -30,7 +30,8 @@ button { color: inherit; }
   background-size: auto, 100% 4px;
   mix-blend-mode: multiply;
 }
-canvas { display: block; }
+canvas { display: block; cursor: default; }
+canvas.paint-cursor { cursor: none; }
 
 .panel {
   background: rgba(20, 31, 36, 0.9);
@@ -143,8 +144,7 @@ kbd { min-width: 44px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2);
 .crosshair i:nth-child(3), .crosshair i:nth-child(4) { width: 1px; height: 10px; left: 22px; }
 .crosshair i:nth-child(3) { top: 4px; } .crosshair i:nth-child(4) { bottom: 4px; }
 .crosshair b { position: absolute; width: 4px; height: 4px; left: 20px; top: 20px; border: 1px solid var(--acid); border-radius: 50%; }
-.lock-hint, .action-hint { position: absolute; left: 50%; transform: translateX(-50%); font: 600 9px "Chakra Petch"; letter-spacing: .12em; text-shadow: 0 2px 4px #000; }
-.lock-hint { top: calc(50% + 42px); padding: 7px 10px; background: rgba(17,27,32,.8); }
+.action-hint { position: absolute; left: 50%; transform: translateX(-50%); font: 600 9px "Chakra Petch"; letter-spacing: .12em; text-shadow: 0 2px 4px #000; }
 .action-hint { bottom: 25px; color: rgba(255,255,255,.72); }
 
 .event-feed { position: absolute; right: 24px; top: 100px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
@@ -156,7 +156,6 @@ kbd { min-width: 44px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2);
 .toast.visible { transform: translate(-50%, 0); opacity: 1; }
 
 .hud.painting .crosshair,
-.hud.painting .lock-hint,
 .hud.painting .action-hint,
 .hud.painting .role-card,
 .hud.painting .paint-panel { display: none; }

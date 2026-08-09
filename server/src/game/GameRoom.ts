@@ -20,17 +20,22 @@ import {
   type RoundState,
   type ServerMessage
 } from "@mechfall/shared";
-import { moveBody } from "./physics.js";
+import { moveBody, moveClingingBody, wantsToDetachFromSurface } from "./physics.js";
 
 interface RoomPlayer extends PlayerState {
   socket?: WebSocket;
-  input: InputPayload;
+  input: Required<InputPayload>;
   lastInputAt: number;
   lastShotAt: number;
   lastWhistleAt: number;
   lastPaintAt: number;
   paintStrokes: PaintStroke[];
+  clingDetachedUntil: number;
 }
+
+const CLING_REATTACH_DELAY_MS = 280;
+const CLING_RELEASE_NUDGE = 0.08;
+const CLING_RELEASE_SPEED = 2.2;
 
 export class GameRoom {
   readonly id: string;
@@ -125,25 +130,35 @@ export class GameRoom {
       score: 0,
       tags: 0,
       whistlingUntil: 0,
-      input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, yaw: 0 },
+      input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: 0 },
       lastInputAt: Date.now(),
       lastShotAt: 0,
       lastWhistleAt: 0,
       lastPaintAt: 0,
-      paintStrokes: []
+      paintStrokes: [],
+      clingDetachedUntil: 0
     };
   }
 
-  private applyInput(player: RoomPlayer, input: InputPayload): void {
-    if (!Number.isFinite(input.sequence) || !Number.isFinite(input.forward) || !Number.isFinite(input.strafe) || !Number.isFinite(input.yaw)) return;
-    if (input.sequence <= player.input.sequence) return;
+  private applyInput(player: RoomPlayer, input: unknown): void {
+    if (!input || typeof input !== "object") return;
+    const candidate = input as Record<string, unknown>;
+    if (!isFiniteNumber(candidate.sequence)
+        || !Number.isSafeInteger(candidate.sequence)
+        || !isFiniteNumber(candidate.forward)
+        || !isFiniteNumber(candidate.strafe)
+        || !isFiniteNumber(candidate.yaw)) return;
+    if (candidate.sequence <= player.input.sequence) return;
+    const climb = isFiniteNumber(candidate.climb) ? candidate.climb : 0;
     player.input = {
-      sequence: Math.floor(input.sequence),
-      forward: clamp(input.forward, -1, 1),
-      strafe: clamp(input.strafe, -1, 1),
-      jump: Boolean(input.jump),
-      sprint: Boolean(input.sprint),
-      yaw: normalizeAngle(input.yaw)
+      sequence: candidate.sequence,
+      forward: clamp(candidate.forward, -1, 1),
+      strafe: clamp(candidate.strafe, -1, 1),
+      jump: player.input.jump || candidate.jump === true,
+      sprint: candidate.sprint === true,
+      climb: clamp(climb, -1, 1),
+      detach: player.input.detach || candidate.detach === true,
+      yaw: normalizeAngle(candidate.yaw)
     };
     player.yaw = player.input.yaw;
     player.lastInputAt = Date.now();
@@ -188,12 +203,33 @@ export class GameRoom {
     this.updateRound(now);
 
     for (const player of this.players.values()) {
+      const detachRequested = player.input.detach;
+      player.input.detach = false;
       if (!player.alive || player.role === "spectator") continue;
 
       const frozen = this.round.phase === "results" || (this.round.phase === "hiding" && player.role === "hunter");
       const stale = now - player.lastInputAt > GAME.inputTimeoutMs;
       const forward = frozen || stale ? 0 : player.input.forward;
       const strafe = frozen || stale ? 0 : player.input.strafe;
+      const canCling = !frozen && !stale && player.role === "hider";
+      if (player.cling) {
+        const queuedClimbUp = player.input.jump;
+        player.input.jump = false;
+        const directionalDetach = wantsToDetachFromSurface(
+          player.cling,
+          player.yaw,
+          forward
+        );
+        if (!canCling || detachRequested || directionalDetach) {
+          this.releaseCling(player, now);
+        } else {
+          const vertical = queuedClimbUp ? 1 : player.input.climb;
+          if (moveClingingBody(player, player.cling, player.yaw, strafe, vertical, dt)) {
+            continue;
+          }
+          this.releaseCling(player, now);
+        }
+      }
       const sin = Math.sin(player.yaw);
       const cos = Math.cos(player.yaw);
       const wishX = -sin * forward + cos * strafe;
@@ -204,9 +240,30 @@ export class GameRoom {
         : sprinting
           ? player.role === "hunter" ? GAME.hunterSprintSpeed : GAME.sprintSpeed
           : player.role === "hunter" ? GAME.hunterSpeed : GAME.moveSpeed;
-      moveBody(player, wishX, wishZ, speed, !frozen && player.input.jump, dt);
+      const collision = moveBody(player, wishX, wishZ, speed, !frozen && player.input.jump, player.yaw, dt);
       player.input.jump = false;
+
+      if (canCling
+          && now >= player.clingDetachedUntil
+          && !detachRequested
+          && collision) {
+        player.cling = collision;
+        if (!moveClingingBody(player, collision, player.yaw, 0, 0, 0)) {
+          player.cling = undefined;
+        }
+      }
     }
+  }
+
+  private releaseCling(player: RoomPlayer, now: number): void {
+    const detached = player.cling;
+    if (!detached) return;
+    player.cling = undefined;
+    player.clingDetachedUntil = now + CLING_REATTACH_DELAY_MS;
+    player.position.x += detached.normalX * CLING_RELEASE_NUDGE;
+    player.position.z += detached.normalZ * CLING_RELEASE_NUDGE;
+    player.velocity.x = detached.normalX * CLING_RELEASE_SPEED;
+    player.velocity.z = detached.normalZ * CLING_RELEASE_SPEED;
   }
 
   private updateRound(now: number): void {
@@ -251,6 +308,8 @@ export class GameRoom {
       player.alive = true;
       player.pose = "stand";
       player.velocity = { x: 0, y: 0, z: 0 };
+      player.cling = undefined;
+      player.clingDetachedUntil = 0;
     }
     this.round = { phase: "waiting", endsAt: 0, round: this.round.round };
   }
@@ -270,6 +329,8 @@ export class GameRoom {
       const spawn = SPAWN_POINTS[index % SPAWN_POINTS.length] ?? [0, 0, 0];
       player.position = { x: spawn[0], y: spawn[1], z: spawn[2] };
       player.velocity = { x: 0, y: 0, z: 0 };
+      player.cling = undefined;
+      player.clingDetachedUntil = 0;
     }
     this.nextHunterOffset = (this.nextHunterOffset + hunterCount) % participants.length;
     this.round = { phase: "hiding", endsAt: now + GAME.hidingSeconds * 1000, round: this.round.round + 1 };
@@ -287,17 +348,16 @@ export class GameRoom {
       || now - hunter.lastShotAt < GAME.shotgunCooldownMs
     ) return;
     hunter.lastShotAt = now;
-    hunter.yaw = normalizeAngle(requestedYaw);
-    hunter.input.yaw = hunter.yaw;
+    const aimYaw = normalizeAngle(requestedYaw);
 
     // The camera's normal third-person pitch is -0.22. Treat that as a level
     // muzzle and retain a small amount of vertical aiming for jumps/ledges.
     const pitch = clamp(requestedPitch + 0.22, -0.12, 0.12);
     const horizontal = Math.cos(pitch);
     const direction = {
-      x: -Math.sin(hunter.yaw) * horizontal,
+      x: -Math.sin(aimYaw) * horizontal,
       y: Math.sin(pitch),
-      z: -Math.cos(hunter.yaw) * horizontal
+      z: -Math.cos(aimYaw) * horizontal
     };
     const origin = { x: hunter.position.x, y: hunter.position.y + 1.28, z: hunter.position.z };
     const blockedAt = firstWorldHit(origin, direction, GAME.shotgunRange);
@@ -327,6 +387,8 @@ export class GameRoom {
       closest.alive = false;
       closest.role = "spectator";
       closest.pose = "stand";
+      closest.cling = undefined;
+      closest.clingDetachedUntil = 0;
       hunter.tags += 1;
       hunter.score += 100;
     }
@@ -363,7 +425,7 @@ export class GameRoom {
       selfId: player.id,
       gameId: this.id,
       ownerId: this.ownerId,
-      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, ...state }) => state),
+      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, clingDetachedUntil: _clingDetachedUntil, ...state }) => state),
       round: this.round,
       event: this.pendingEvent
     });
@@ -381,6 +443,10 @@ export class GameRoom {
 function sanitizeName(name: string): string {
   const clean = String(name ?? "").replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 18);
   return clean || `Drifter ${Math.floor(Math.random() * 900 + 100)}`;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isPose(value: unknown): value is Pose {

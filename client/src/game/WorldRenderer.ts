@@ -54,6 +54,11 @@ interface Avatar {
   state: PlayerState;
 }
 
+interface CharacterAlignment {
+  scale: number;
+  position: THREE.Vector3;
+}
+
 export class WorldRenderer {
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
@@ -71,8 +76,10 @@ export class WorldRenderer {
   private paintView = false;
   private paintOrbitYaw = 0;
   private paintOrbitPitch = 0;
+  private cameraDistance = 5.4;
   private characterTemplate?: THREE.Group;
   private characterAnimations: THREE.AnimationClip[] = [];
+  private characterAlignment?: CharacterAlignment;
   private shotgunTemplate?: THREE.Group;
   private readonly characterLoadPromise: Promise<void>;
 
@@ -209,6 +216,12 @@ export class WorldRenderer {
     this.paintOrbitPitch = Math.max(-0.5, Math.min(0.72, this.paintOrbitPitch - deltaY * 0.004));
   }
 
+  zoomCamera(deltaY: number): void {
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    const zoomDelta = Math.sign(deltaY) * THREE.MathUtils.clamp(Math.abs(deltaY) * 0.006, 0.18, 0.75);
+    this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + zoomDelta, 2.8, 9);
+  }
+
   applySnapshot(snapshot: ServerSnapshot): void {
     this.selfId = snapshot.selfId;
     const liveIds = new Set(snapshot.players.map((player) => player.id));
@@ -242,7 +255,7 @@ export class WorldRenderer {
       avatar.root.visible = player.alive;
       avatar.hunterMark.visible = player.role === "hunter";
       avatar.weapon.visible = player.role === "hunter" && player.alive;
-      this.setPose(avatar, player.pose);
+      this.setPose(avatar, isAttachedMovement(player) ? "stand" : player.pose);
     }
   }
 
@@ -637,6 +650,7 @@ export class WorldRenderer {
       const gltf = await new GLTFLoader().loadAsync("/models/chameleon-man-pro.glb?v=4");
       this.characterTemplate = gltf.scene;
       this.characterAnimations = [...gltf.animations, ...createHunterCarryClips(gltf.animations)];
+      this.characterAlignment = this.measureStandingCharacterAlignment();
 
       for (const [id, oldAvatar] of [...this.avatars]) {
         if (!oldAvatar.procedural) continue;
@@ -687,18 +701,38 @@ export class WorldRenderer {
     return this.characterTemplate ? this.createModelAvatar(state) : this.createProceduralAvatar(state);
   }
 
+  private measureStandingCharacterAlignment(): CharacterAlignment {
+    if (!this.characterTemplate) return { scale: 1, position: new THREE.Vector3() };
+    const reference = cloneSkeleton(this.characterTemplate);
+    reference.rotation.y = Math.PI;
+    const standingClip = this.characterAnimations.find((clip) => clip.name === POSE_CLIPS.stand);
+    let mixer: THREE.AnimationMixer | undefined;
+    if (standingClip) {
+      mixer = new THREE.AnimationMixer(reference);
+      mixer.clipAction(standingClip).reset().play();
+      mixer.update(0);
+    }
+    reference.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(reference, true);
+    mixer?.stopAllAction();
+    mixer?.uncacheRoot(reference);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const scale = size.y > 0 ? CHARACTER_HEIGHT / size.y : 1;
+    return {
+      scale,
+      position: new THREE.Vector3(-center.x * scale, -bounds.min.y * scale, -center.z * scale)
+    };
+  }
+
   private createModelAvatar(state: PlayerState): Avatar {
     if (!this.characterTemplate) return this.createProceduralAvatar(state);
     const root = new THREE.Group();
     const visual = cloneSkeleton(this.characterTemplate);
     visual.rotation.y = Math.PI;
-    visual.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(visual);
-    const size = bounds.getSize(new THREE.Vector3());
-    const center = bounds.getCenter(new THREE.Vector3());
-    const scale = size.y > 0 ? CHARACTER_HEIGHT / size.y : 1;
-    visual.scale.setScalar(scale);
-    visual.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+    const alignment = this.characterAlignment ?? this.measureStandingCharacterAlignment();
+    visual.scale.setScalar(alignment.scale);
+    visual.position.copy(alignment.position);
     root.add(visual);
 
     const canvas = document.createElement("canvas");
@@ -990,7 +1024,6 @@ export class WorldRenderer {
     requestAnimationFrame(this.animate);
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const elapsed = this.clock.elapsedTime;
-    this.input?.updateCamera(dt);
 
     const renderTime = performance.now();
     for (const [id, avatar] of this.avatars) {
@@ -1009,9 +1042,11 @@ export class WorldRenderer {
       const yawResponse = id === this.selfId ? 1 : 1 - Math.exp(-18 * dt);
       avatar.root.rotation.y += shortestAngle(avatar.root.rotation.y, desiredYaw) * yawResponse;
       const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
-      const moving = planarSpeed > 0.3;
+      const attachedMoving = isAttachedMovement(avatar.state);
+      const displayPose = attachedMoving ? "stand" : avatar.state.pose;
+      const moving = avatar.state.cling === undefined && planarSpeed > 0.3;
       const stride = moving ? Math.sin(elapsed * 12) * 0.48 : 0;
-      if (avatar.procedural && avatar.state.pose === "stand" && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
+      if (avatar.procedural && displayPose === "stand" && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
         avatar.leftLeg.rotation.x = stride;
         avatar.rightLeg.rotation.x = -stride;
         if (avatar.state.role === "hunter") {
@@ -1022,13 +1057,13 @@ export class WorldRenderer {
           avatar.rightArm.rotation.set(stride * 0.65, 0, 0);
         }
       } else if (!avatar.procedural) {
-        const running = planarSpeed > GAME.hunterSpeed + 0.35;
+        const running = moving && planarSpeed > GAME.hunterSpeed + 0.35;
         const clipName = avatar.state.role === "hunter"
           ? moving
             ? running ? HUNTER_RUN_CLIP : HUNTER_WALK_CLIP
             : HUNTER_IDLE_CLIP
-          : avatar.state.pose !== "stand"
-            ? POSE_CLIPS[avatar.state.pose]
+          : displayPose !== "stand"
+            ? POSE_CLIPS[displayPose]
             : moving
               ? running ? RUN_CLIP : WALK_CLIP
               : POSE_CLIPS.stand;
@@ -1036,7 +1071,7 @@ export class WorldRenderer {
           ? avatar.state.role === "hunter" ? GAME.hunterSprintSpeed : GAME.sprintSpeed
           : avatar.state.role === "hunter" ? GAME.hunterSpeed : GAME.moveSpeed;
         const timeScale = moving ? THREE.MathUtils.clamp(planarSpeed / expectedSpeed, 0.7, 1.35) : 1;
-        this.setAvatarAnimation(avatar, clipName, avatar.state.pose === "stand" && moving, timeScale);
+        this.setAvatarAnimation(avatar, clipName, displayPose === "stand" && moving, timeScale);
         avatar.mixer?.update(dt);
       }
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
@@ -1056,7 +1091,7 @@ export class WorldRenderer {
       const inputYaw = this.input?.yaw ?? focus.state.yaw;
       const yaw = inputYaw + (this.input?.cameraYawOffset ?? 0) + (this.paintView ? this.paintOrbitYaw : 0);
       const pitch = (this.input?.pitch ?? -0.2) + (this.input?.cameraPitchOffset ?? 0) + (this.paintView ? this.paintOrbitPitch : 0);
-      const distance = 5.4;
+      const distance = this.cameraDistance;
       const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose], 0));
       const horizontal = Math.cos(pitch) * distance;
       const desired = target.clone().add(new THREE.Vector3(Math.sin(yaw) * horizontal, 1.2 + Math.sin(-pitch) * distance, Math.cos(yaw) * horizontal));
@@ -1368,6 +1403,11 @@ function roundPaintValue(value: number): number {
 
 function shortestAngle(from: number, to: number): number {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+}
+
+function isAttachedMovement(state: PlayerState): boolean {
+  return state.cling !== undefined
+    && Math.hypot(state.velocity.x, state.velocity.y, state.velocity.z) > 0.3;
 }
 
 const PAINT_TEXTURE_SIZE = 1024;

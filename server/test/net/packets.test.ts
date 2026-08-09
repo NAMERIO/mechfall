@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   PROTOCOL_VERSION,
+  MAX_GAME_PACKET_BYTES,
+  MAX_PAINT_STROKES_PER_PACKET,
   WsPacketType,
   decodeClientMessage,
   decodeServerMessage,
@@ -26,4 +28,48 @@ test("websocket decoder rejects a payload with a forged type byte", () => {
 test("server packets round-trip through the shared binary codec", () => {
   const message: ServerMessage = { type: "welcome", id: "player", gameId: "ABC123", protocol: PROTOCOL_VERSION };
   assert.deepEqual(decodeServerMessage(encodeServerMessage(message)), message);
+});
+
+test("projected face brush strokes round-trip through the multiplayer codec", () => {
+  const message: ServerMessage = {
+    type: "paintStroke",
+    playerId: "player",
+    stroke: {
+      part: "body",
+      u: 0.3,
+      v: 0.7,
+      face: 481,
+      brushUx: 0.04,
+      brushVx: -0.01,
+      brushUy: 0.005,
+      brushVy: 0.03,
+      brushEndU: 0.42,
+      brushEndV: 0.72,
+      color: "#35d6c7",
+      size: 0.07
+    }
+  };
+  assert.deepEqual(decodeServerMessage(encodeServerMessage(message)), message);
+});
+
+test("a full projected paint batch stays below the WebSocket payload limit", () => {
+  const stroke = {
+    part: "body",
+    u: 0.123456,
+    v: 0.654321,
+    face: 2_847,
+    brushUx: 0.012345,
+    brushVx: -0.012345,
+    brushUy: 0.023456,
+    brushVy: -0.023456,
+    brushEndU: 0.876543,
+    brushEndV: 0.765432,
+    color: "#35d6c7",
+    size: 0.12
+  } as const;
+  const packet = encodeClientMessage({
+    type: "paintStrokes",
+    strokes: Array.from({ length: MAX_PAINT_STROKES_PER_PACKET }, () => ({ ...stroke }))
+  });
+  assert.ok(packet.byteLength < MAX_GAME_PACKET_BYTES, `${packet.byteLength} byte paint packet exceeds server limit`);
 });

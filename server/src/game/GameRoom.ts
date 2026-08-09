@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
   GAME,
+  MAX_PAINT_STROKES_PER_PACKET,
   PLAYER_POSES,
   PROTOCOL_VERSION,
   SPAWN_POINTS,
@@ -152,23 +153,33 @@ export class GameRoom {
     const now = Date.now();
     if (player.role !== "hider" || !player.alive || now - player.lastPaintAt < 20) return;
     if (!Array.isArray(strokes)) return;
-    const safeStrokes = strokes.slice(0, 64).map((stroke) => this.sanitizePaintStroke(stroke)).filter((stroke): stroke is PaintStroke => Boolean(stroke));
+    const safeStrokes = strokes.slice(0, MAX_PAINT_STROKES_PER_PACKET).map((stroke) => this.sanitizePaintStroke(stroke)).filter((stroke): stroke is PaintStroke => Boolean(stroke));
     if (safeStrokes.length === 0) return;
     player.lastPaintAt = now;
     player.paintStrokes.push(...safeStrokes);
-    if (player.paintStrokes.length > 600) player.paintStrokes.splice(0, player.paintStrokes.length - 600);
+    if (player.paintStrokes.length > 2_400) player.paintStrokes.splice(0, player.paintStrokes.length - 2_400);
     this.broadcast({ type: "paintStrokes", playerId: player.id, strokes: safeStrokes });
   }
 
   private sanitizePaintStroke(stroke: PaintStroke): PaintStroke | undefined {
     if (!stroke || !isPaintPart(stroke.part) || !isHexColor(stroke.color)) return undefined;
     if (!Number.isFinite(stroke.u) || !Number.isFinite(stroke.v) || !Number.isFinite(stroke.size)) return undefined;
+    const hasProjectedBrush = [stroke.brushUx, stroke.brushVx, stroke.brushUy, stroke.brushVy]
+      .every((value) => Number.isFinite(value));
+    const hasBrushEnd = Number.isFinite(stroke.brushEndU) && Number.isFinite(stroke.brushEndV);
     return {
       part: stroke.part,
-      u: clamp(stroke.u, 0, 1),
-      v: clamp(stroke.v, 0, 1),
+      u: clamp(stroke.u, hasProjectedBrush ? -1 : 0, hasProjectedBrush ? 2 : 1),
+      v: clamp(stroke.v, hasProjectedBrush ? -1 : 0, hasProjectedBrush ? 2 : 1),
+      face: Number.isFinite(stroke.face) ? Math.floor(clamp(stroke.face!, 0, 20_000)) : undefined,
+      brushUx: hasProjectedBrush ? clamp(stroke.brushUx!, -1, 1) : undefined,
+      brushVx: hasProjectedBrush ? clamp(stroke.brushVx!, -1, 1) : undefined,
+      brushUy: hasProjectedBrush ? clamp(stroke.brushUy!, -1, 1) : undefined,
+      brushVy: hasProjectedBrush ? clamp(stroke.brushVy!, -1, 1) : undefined,
+      brushEndU: hasProjectedBrush && hasBrushEnd ? clamp(stroke.brushEndU!, -1, 2) : undefined,
+      brushEndV: hasProjectedBrush && hasBrushEnd ? clamp(stroke.brushEndV!, -1, 2) : undefined,
       color: stroke.color.toLowerCase(),
-      size: clamp(stroke.size, 0.015, 0.22)
+      size: clamp(stroke.size, 0.002, 0.22)
     };
   }
 

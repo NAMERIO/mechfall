@@ -6,6 +6,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import {
   PROTOCOL_VERSION,
+  MAX_GAME_PACKET_BYTES,
   decodeClientMessage,
   type FindGameResponse,
   type GameWsDisconnectReason
@@ -17,7 +18,7 @@ const host = process.env.HOST ?? "0.0.0.0";
 const app = express();
 const server = createServer(app);
 const rooms = new RoomManager();
-const sockets = new WebSocketServer({ noServer: true, maxPayload: 16_384 });
+const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_GAME_PACKET_BYTES });
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "4kb" }));

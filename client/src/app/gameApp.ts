@@ -1,4 +1,4 @@
-import { GAME, PLAYER_POSES, type GameEvent, type PaintStroke, type Pose, type ServerMessage, type ServerSnapshot } from "@mechfall/shared";
+import { GAME, MAX_PAINT_STROKES_PER_PACKET, PLAYER_POSES, type GameEvent, type PaintStroke, type Pose, type ServerMessage, type ServerSnapshot } from "@mechfall/shared";
 import { InputController } from "../game/InputController.ts";
 import { WorldRenderer } from "../game/WorldRenderer.ts";
 import { GameConnection } from "../net/GameConnection.ts";
@@ -74,6 +74,8 @@ let orbitingPaintCamera = false;
 let paintColor = "#f5f0df";
 let brushSize = 0.07;
 let lastPaintPoint: { x: number; y: number } | undefined;
+let queuedPaintPoint: { x: number; y: number } | undefined;
+let paintFrameQueued = false;
 let pendingPaintStrokes: PaintStroke[] = [];
 let paintFlushTimer = 0;
 let lastLocalShotAt = 0;
@@ -141,7 +143,7 @@ world.canvas.addEventListener("pointermove", (event) => {
   brushCursor.style.left = `${pointerX}px`;
   brushCursor.style.top = `${pointerY}px`;
   if (paintMode && orbitingPaintCamera) world.orbitPaintCamera(event.movementX, event.movementY);
-  if (paintMode && painting) paintLineTo(pointerX, pointerY);
+  if (paintMode && painting) queuePaintLine(pointerX, pointerY);
 });
 world.canvas.addEventListener("pointerdown", (event) => {
   if (!paintMode) return;
@@ -157,6 +159,7 @@ world.canvas.addEventListener("pointerdown", (event) => {
   }
 });
 window.addEventListener("pointerup", () => {
+  flushQueuedPaintLine();
   painting = false;
   lastPaintPoint = undefined;
   orbitingPaintCamera = false;
@@ -433,18 +436,31 @@ function selectPose(pose: Pose): void {
 
 function paintLineTo(clientX: number, clientY: number): void {
   const from = lastPaintPoint ?? { x: clientX, y: clientY };
-  const distance = Math.hypot(clientX - from.x, clientY - from.y);
-  const spacing = Math.max(4, 13 - brushSize * 45);
-  const steps = Math.min(64, Math.max(1, Math.ceil(distance / spacing)));
-  for (let step = 1; step <= steps; step += 1) {
-    const progress = step / steps;
-    const x = from.x + (clientX - from.x) * progress;
-    const y = from.y + (clientY - from.y) * progress;
-    const stroke = world.paintAtScreen(x, y, paintColor, brushSize);
-    if (stroke) pendingPaintStrokes.push(stroke);
-  }
+  pendingPaintStrokes.push(...world.paintBrushLineAtScreen(from.x, from.y, clientX, clientY, paintColor, brushSize));
   lastPaintPoint = { x: clientX, y: clientY };
   schedulePaintFlush();
+}
+
+function queuePaintLine(clientX: number, clientY: number): void {
+  queuedPaintPoint = { x: clientX, y: clientY };
+  if (paintFrameQueued) return;
+  paintFrameQueued = true;
+  world.scheduleBeforeRender(paintQueuedLineBeforeRender);
+}
+
+function paintQueuedLineBeforeRender(): void {
+  paintFrameQueued = false;
+  const point = queuedPaintPoint;
+  queuedPaintPoint = undefined;
+  if (point && paintMode && painting) paintLineTo(point.x, point.y);
+}
+
+function flushQueuedPaintLine(): void {
+  world.cancelBeforeRender(paintQueuedLineBeforeRender);
+  paintFrameQueued = false;
+  const point = queuedPaintPoint;
+  queuedPaintPoint = undefined;
+  if (point && paintMode && painting) paintLineTo(point.x, point.y);
 }
 
 function schedulePaintFlush(): void {
@@ -454,7 +470,9 @@ function schedulePaintFlush(): void {
 
 function flushPaintStrokes(): void {
   paintFlushTimer = 0;
-  const strokes = pendingPaintStrokes.splice(0, 64);
+  // Projected face strokes contain several transform values. Keep each JSON
+  // packet comfortably below the server's 16 KiB WebSocket payload limit.
+  const strokes = pendingPaintStrokes.splice(0, MAX_PAINT_STROKES_PER_PACKET);
   if (strokes.length > 0) connection?.send({ type: "paintStrokes", strokes });
   if (pendingPaintStrokes.length > 0) schedulePaintFlush();
 }
@@ -484,6 +502,9 @@ function discardPendingPaint(): void {
   window.clearTimeout(paintFlushTimer);
   paintFlushTimer = 0;
   pendingPaintStrokes = [];
+  world.cancelBeforeRender(paintQueuedLineBeforeRender);
+  paintFrameQueued = false;
+  queuedPaintPoint = undefined;
   lastPaintPoint = undefined;
 }
 

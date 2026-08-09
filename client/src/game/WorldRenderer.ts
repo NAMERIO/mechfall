@@ -20,6 +20,8 @@ interface PaintSurface {
   context: CanvasRenderingContext2D;
   texture: THREE.CanvasTexture;
   material: THREE.MeshStandardMaterial;
+  uvPaintLayer?: boolean;
+  transparentLayer?: boolean;
 }
 
 interface Avatar {
@@ -62,6 +64,7 @@ export class WorldRenderer {
   private readonly sampleSurfaces: THREE.Object3D[] = [];
   private readonly raycaster = new THREE.Raycaster();
   private readonly pendingPaint = new Map<string, PaintStroke[]>();
+  private readonly beforeRenderTasks = new Set<() => void>();
   private selfId = "";
   private input?: InputController;
   private running = true;
@@ -71,6 +74,7 @@ export class WorldRenderer {
   private characterTemplate?: THREE.Group;
   private characterAnimations: THREE.AnimationClip[] = [];
   private shotgunTemplate?: THREE.Group;
+  private readonly characterLoadPromise: Promise<void>;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -87,7 +91,7 @@ export class WorldRenderer {
     this.scene.fog = new THREE.FogExp2("#b8c4ba", 0.018);
     this.buildLighting();
     this.buildWorld();
-    void this.loadCharacterModel();
+    this.characterLoadPromise = this.loadCharacterModel();
     void this.loadShotgunModel();
     this.resize();
     window.addEventListener("resize", () => this.resize());
@@ -98,8 +102,100 @@ export class WorldRenderer {
     this.input = input;
   }
 
+  scheduleBeforeRender(task: () => void): void {
+    this.beforeRenderTasks.add(task);
+  }
+
+  cancelBeforeRender(task: () => void): void {
+    this.beforeRenderTasks.delete(task);
+  }
+
+  waitForCharacterModel(): Promise<void> {
+    return this.characterLoadPromise;
+  }
+
+  measureSelfPaintCoverage(color: string): { painted: number; total: number; ratio: number } {
+    const avatar = this.avatars.get(this.selfId);
+    if (!avatar) return { painted: 0, total: 0, ratio: 0 };
+    const target = Number.parseInt(color.replace("#", ""), 16);
+    const targetRed = (target >> 16) & 0xff;
+    const targetGreen = (target >> 8) & 0xff;
+    const targetBlue = target & 0xff;
+    let painted = 0;
+    let total = 0;
+
+    for (const surface of avatar.paintSurfaces.values()) {
+      const pixels = surface.context.getImageData(0, 0, surface.canvas.width, surface.canvas.height).data;
+      const geometry = surface.mesh.geometry;
+      const uvs = geometry.getAttribute("uv");
+      const positions = geometry.getAttribute("position");
+      const faceCount = geometry.index ? Math.floor(geometry.index.count / 3) : Math.floor(positions.count / 3);
+      for (let face = 0; face < faceCount; face += 1) {
+        const vertices = paintFaceVertices(geometry, face);
+        const u = (uvs.getX(vertices[0]) + uvs.getX(vertices[1]) + uvs.getX(vertices[2])) / 3;
+        const v = (uvs.getY(vertices[0]) + uvs.getY(vertices[1]) + uvs.getY(vertices[2])) / 3;
+        const x = THREE.MathUtils.clamp(Math.floor(u * surface.canvas.width), 0, surface.canvas.width - 1);
+        const y = THREE.MathUtils.clamp(Math.floor((1 - v) * surface.canvas.height), 0, surface.canvas.height - 1);
+        total += 1;
+        let paintedFace = false;
+        for (let offsetY = -1; offsetY <= 1 && !paintedFace; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            const sampleX = THREE.MathUtils.clamp(x + offsetX, 0, surface.canvas.width - 1);
+            const sampleY = THREE.MathUtils.clamp(y + offsetY, 0, surface.canvas.height - 1);
+            const offset = (sampleY * surface.canvas.width + sampleX) * 4;
+            if (
+              Math.abs(pixels[offset]! - targetRed) <= 3
+              && Math.abs(pixels[offset + 1]! - targetGreen) <= 3
+              && Math.abs(pixels[offset + 2]! - targetBlue) <= 3
+            ) {
+              paintedFace = true;
+              break;
+            }
+          }
+        }
+        if (paintedFace) painted += 1;
+      }
+    }
+    return { painted, total, ratio: total > 0 ? painted / total : 0 };
+  }
+
+  paintEverySelfFaceForTest(color: string, size: number): number {
+    const avatar = this.avatars.get(this.selfId);
+    if (!avatar) return 0;
+    let strokes = 0;
+    for (const [part, surface] of avatar.paintSurfaces) {
+      const geometry = surface.mesh.geometry;
+      const positions = geometry.getAttribute("position");
+      const uvs = geometry.getAttribute("uv");
+      const faceCount = geometry.index ? Math.floor(geometry.index.count / 3) : Math.floor(positions.count / 3);
+      for (let face = 0; face < faceCount; face += 1) {
+        const vertices = paintFaceVertices(geometry, face);
+        if (surface.uvPaintLayer) {
+          fillPaintFace(surface, vertices, color);
+          strokes += 1;
+          continue;
+        }
+        this.applyPaintStroke(this.selfId, {
+          part,
+          face,
+          u: (uvs.getX(vertices[0]) + uvs.getX(vertices[1]) + uvs.getX(vertices[2])) / 3,
+          v: (uvs.getY(vertices[0]) + uvs.getY(vertices[1]) + uvs.getY(vertices[2])) / 3,
+          color,
+          size
+        });
+        strokes += 1;
+      }
+    }
+    return strokes;
+  }
+
   setPaintView(active: boolean): void {
     this.paintView = active;
+    const targetPixelRatio = Math.min(window.devicePixelRatio, active ? 1.25 : 1.75);
+    if (this.renderer.getPixelRatio() !== targetPixelRatio) {
+      this.renderer.setPixelRatio(targetPixelRatio);
+      this.resize();
+    }
     if (active) {
       // Preserve the normal behind-the-player view when opening paint mode.
       this.paintOrbitYaw = 0;
@@ -139,7 +235,10 @@ export class WorldRenderer {
         avatar.baseColor = player.color;
         this.redrawPaint(avatar);
       }
-      for (const surface of avatar.paintSurfaces.values()) surface.material.roughness = COMPACT_POSES.has(player.pose) ? 0.48 : 0.7;
+      for (const surface of avatar.paintSurfaces.values()) {
+        surface.material.roughness = 1;
+        surface.material.metalness = 0;
+      }
       avatar.root.visible = player.alive;
       avatar.hunterMark.visible = player.role === "hunter";
       avatar.weapon.visible = player.role === "hunter" && player.alive;
@@ -172,6 +271,157 @@ export class WorldRenderer {
   }
 
   paintAtScreen(clientX: number, clientY: number, color: string, size: number): PaintStroke | undefined {
+    return this.paintDabAtScreen(clientX, clientY, color, size);
+  }
+
+  paintBrushAtScreen(clientX: number, clientY: number, color: string, size: number): PaintStroke[] {
+    return this.paintBrushLineAtScreen(clientX, clientY, clientX, clientY, color, size);
+  }
+
+  paintBrushLineAtScreen(
+    fromX: number,
+    fromY: number,
+    clientX: number,
+    clientY: number,
+    color: string,
+    size: number
+  ): PaintStroke[] {
+    const radius = 9 + size * 120;
+    const avatar = this.avatars.get(this.selfId);
+    const surface = avatar?.paintSurfaces.get("body");
+    if (!avatar?.state.alive || avatar.state.role !== "hider" || !surface?.uvPaintLayer) {
+      const stroke = this.paintDabAtScreen(clientX, clientY, color, size);
+      return stroke ? [stroke] : [];
+    }
+
+    const geometry = surface.mesh.geometry;
+    const positions = geometry.getAttribute("position");
+    const uvs = geometry.getAttribute("uv");
+    if (!positions || !uvs) return [];
+    if (surface.mesh instanceof THREE.SkinnedMesh) surface.mesh.skeleton.update();
+    surface.mesh.updateWorldMatrix(true, false);
+    this.camera.updateMatrixWorld(true);
+    const canvasBounds = this.canvas.getBoundingClientRect();
+    const projected = new Float32Array(positions.count * 3);
+    const vertex = new THREE.Vector3();
+    for (let index = 0; index < positions.count; index += 1) {
+      surface.mesh.getVertexPosition(index, vertex);
+      surface.mesh.localToWorld(vertex);
+      vertex.project(this.camera);
+      projected[index * 3] = canvasBounds.left + (vertex.x + 1) * canvasBounds.width * 0.5;
+      projected[index * 3 + 1] = canvasBounds.top + (1 - vertex.y) * canvasBounds.height * 0.5;
+      projected[index * 3 + 2] = vertex.z;
+    }
+
+    // A tiny software depth buffer identifies exactly which model triangles
+    // are visible beneath the swept circular cursor. Painting then happens once per
+    // visible face, rather than expanding through neighboring model vertices.
+    const segmentX = clientX - fromX;
+    const segmentY = clientY - fromY;
+    const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+    // Dabs use pixel-exact visibility to catch tiny faces. Longer swept lines
+    // use a 2.5 px depth grid so one fast pointer move still finishes in-frame.
+    const sampleStep = segmentLengthSquared > radius * radius * 0.25 ? 2.5 : 1;
+    const sampleLeft = Math.min(fromX, clientX) - radius;
+    const sampleTop = Math.min(fromY, clientY) - radius;
+    const sampleColumns = Math.ceil((Math.abs(clientX - fromX) + radius * 2) / sampleStep);
+    const sampleRows = Math.ceil((Math.abs(clientY - fromY) + radius * 2) / sampleStep);
+    const depths = new Float32Array(sampleColumns * sampleRows);
+    depths.fill(Number.POSITIVE_INFINITY);
+    const visibleFaces = new Int32Array(sampleColumns * sampleRows);
+    visibleFaces.fill(-1);
+    const faceCount = geometry.index ? Math.floor(geometry.index.count / 3) : Math.floor(positions.count / 3);
+    const radiusSquared = radius * radius;
+
+    for (let face = 0; face < faceCount; face += 1) {
+      const faceVertices = paintFaceVertices(geometry, face);
+      const ax = projected[faceVertices[0] * 3]!;
+      const ay = projected[faceVertices[0] * 3 + 1]!;
+      const bx = projected[faceVertices[1] * 3]!;
+      const by = projected[faceVertices[1] * 3 + 1]!;
+      const cx = projected[faceVertices[2] * 3]!;
+      const cy = projected[faceVertices[2] * 3 + 1]!;
+      const denominator = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+      if (Math.abs(denominator) < 1e-5) continue;
+      const minColumn = Math.max(0, Math.floor((Math.min(ax, bx, cx) - sampleLeft) / sampleStep));
+      const maxColumn = Math.min(sampleColumns - 1, Math.floor((Math.max(ax, bx, cx) - sampleLeft) / sampleStep));
+      const minRow = Math.max(0, Math.floor((Math.min(ay, by, cy) - sampleTop) / sampleStep));
+      const maxRow = Math.min(sampleRows - 1, Math.floor((Math.max(ay, by, cy) - sampleTop) / sampleStep));
+      if (minColumn > maxColumn || minRow > maxRow) continue;
+      const az = projected[faceVertices[0] * 3 + 2]!;
+      const bz = projected[faceVertices[1] * 3 + 2]!;
+      const cz = projected[faceVertices[2] * 3 + 2]!;
+      for (let row = minRow; row <= maxRow; row += 1) {
+        const y = sampleTop + (row + 0.5) * sampleStep;
+        for (let column = minColumn; column <= maxColumn; column += 1) {
+          const x = sampleLeft + (column + 0.5) * sampleStep;
+          const along = segmentLengthSquared > 0
+            ? THREE.MathUtils.clamp(((x - fromX) * segmentX + (y - fromY) * segmentY) / segmentLengthSquared, 0, 1)
+            : 0;
+          const offsetX = x - (fromX + segmentX * along);
+          const offsetY = y - (fromY + segmentY * along);
+          if (offsetX * offsetX + offsetY * offsetY > radiusSquared) continue;
+          const first = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / denominator;
+          const second = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / denominator;
+          const third = 1 - first - second;
+          if (first < -0.001 || second < -0.001 || third < -0.001) continue;
+          const depth = first * az + second * bz + third * cz;
+          const sample = row * sampleColumns + column;
+          if (depth >= depths[sample]!) continue;
+          depths[sample] = depth;
+          visibleFaces[sample] = face;
+        }
+      }
+    }
+
+    const selectedFaces = new Set<number>();
+    for (const face of visibleFaces) if (face >= 0) selectedFaces.add(face);
+    const strokes: PaintStroke[] = [];
+    for (const face of selectedFaces) {
+      const faceVertices = paintFaceVertices(geometry, face);
+      const ax = projected[faceVertices[0] * 3]!;
+      const ay = projected[faceVertices[0] * 3 + 1]!;
+      const bx = projected[faceVertices[1] * 3]!;
+      const by = projected[faceVertices[1] * 3 + 1]!;
+      const cx = projected[faceVertices[2] * 3]!;
+      const cy = projected[faceVertices[2] * 3 + 1]!;
+      const determinant = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+      if (Math.abs(determinant) < 1e-5) continue;
+      const au = uvs.getX(faceVertices[0]);
+      const av = uvs.getY(faceVertices[0]);
+      const du1 = uvs.getX(faceVertices[1]) - au;
+      const dv1 = uvs.getY(faceVertices[1]) - av;
+      const du2 = uvs.getX(faceVertices[2]) - au;
+      const dv2 = uvs.getY(faceVertices[2]) - av;
+      const duDx = (du1 * (cy - ay) - du2 * (by - ay)) / determinant;
+      const duDy = (-du1 * (cx - ax) + du2 * (bx - ax)) / determinant;
+      const dvDx = (dv1 * (cy - ay) - dv2 * (by - ay)) / determinant;
+      const dvDy = (-dv1 * (cx - ax) + dv2 * (bx - ax)) / determinant;
+      const startU = au + duDx * (fromX - ax) + duDy * (fromY - ay);
+      const startV = av + dvDx * (fromX - ax) + dvDy * (fromY - ay);
+      const stroke: PaintStroke = {
+        part: "body",
+        face,
+        u: roundPaintValue(startU),
+        v: roundPaintValue(startV),
+        brushUx: roundPaintValue(duDx * radius),
+        brushVx: roundPaintValue(dvDx * radius),
+        brushUy: roundPaintValue(duDy * radius),
+        brushVy: roundPaintValue(dvDy * radius),
+        color,
+        size
+      };
+      if (segmentLengthSquared > 0.01) {
+        stroke.brushEndU = roundPaintValue(au + duDx * (clientX - ax) + duDy * (clientY - ay));
+        stroke.brushEndV = roundPaintValue(av + dvDx * (clientX - ax) + dvDy * (clientY - ay));
+      }
+      this.applyPaintStroke(this.selfId, stroke);
+      strokes.push(stroke);
+    }
+    return strokes;
+  }
+
+  private paintDabAtScreen(clientX: number, clientY: number, color: string, size: number): PaintStroke | undefined {
     const avatar = this.avatars.get(this.selfId);
     if (!avatar?.state.alive || avatar.state.role !== "hider") return undefined;
     this.setRayFromScreen(clientX, clientY);
@@ -179,7 +429,14 @@ export class WorldRenderer {
     const hit = this.raycaster.intersectObjects(meshes, false)[0];
     const part = hit?.object.userData.paintPart as PaintPart | undefined;
     if (!hit?.uv || !part) return undefined;
-    const stroke: PaintStroke = { part, u: hit.uv.x, v: hit.uv.y, color, size };
+    const stroke: PaintStroke = {
+      part,
+      u: roundPaintValue(hit.uv.x),
+      v: roundPaintValue(hit.uv.y),
+      face: hit.faceIndex ?? undefined,
+      color,
+      size
+    };
     this.applyPaintStroke(this.selfId, stroke);
     return stroke;
   }
@@ -377,7 +634,7 @@ export class WorldRenderer {
 
   private async loadCharacterModel(): Promise<void> {
     try {
-      const gltf = await new GLTFLoader().loadAsync("/models/chameleon-man-pro.glb");
+      const gltf = await new GLTFLoader().loadAsync("/models/chameleon-man-pro.glb?v=4");
       this.characterTemplate = gltf.scene;
       this.characterAnimations = [...gltf.animations, ...createHunterCarryClips(gltf.animations)];
 
@@ -445,15 +702,17 @@ export class WorldRenderer {
     root.add(visual);
 
     const canvas = document.createElement("canvas");
-    canvas.width = 512;
-    canvas.height = 512;
+    canvas.width = PAINT_TEXTURE_SIZE;
+    canvas.height = PAINT_TEXTURE_SIZE;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Canvas 2D painting is unavailable");
-    context.fillStyle = state.color;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.clearRect(0, 0, canvas.width, canvas.height);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.72, metalness: 0 });
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    const material = createPaintLayerMaterial(state.color, texture);
     const paintSurfaces = new Map<PaintPart, PaintSurface>();
     let characterMesh: THREE.Mesh | undefined;
     visual.traverse((child) => {
@@ -465,7 +724,15 @@ export class WorldRenderer {
       characterMesh ??= child;
     });
     if (!characterMesh) throw new Error("Chameleon Man Pro does not contain a mesh");
-    paintSurfaces.set("body", { mesh: characterMesh, canvas, context, texture, material });
+    paintSurfaces.set("body", {
+      mesh: characterMesh,
+      canvas,
+      context,
+      texture,
+      material,
+      uvPaintLayer: true,
+      transparentLayer: true
+    });
 
     const hunterMark = new THREE.Group();
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.055, 8, 24), new THREE.MeshBasicMaterial({ color: "#ff594f" }));
@@ -530,7 +797,7 @@ export class WorldRenderer {
       context.fillRect(0, 0, canvas.width, canvas.height);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
-      const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.68, metalness: 0.02 });
+      const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 1, metalness: 0 });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.userData.paintPart = part;
       paintSurfaces.set(part, { mesh, canvas, context, texture, material });
@@ -627,8 +894,13 @@ export class WorldRenderer {
 
   private redrawPaint(avatar: Avatar): void {
     for (const surface of avatar.paintSurfaces.values()) {
-      surface.context.fillStyle = avatar.baseColor;
-      surface.context.fillRect(0, 0, surface.canvas.width, surface.canvas.height);
+      if (surface.transparentLayer) {
+        surface.context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);
+        surface.material.color.set(avatar.baseColor);
+      } else {
+        surface.context.fillStyle = avatar.baseColor;
+        surface.context.fillRect(0, 0, surface.canvas.width, surface.canvas.height);
+      }
       surface.texture.needsUpdate = true;
     }
     for (const stroke of avatar.strokes) this.drawStroke(avatar, stroke);
@@ -637,6 +909,11 @@ export class WorldRenderer {
   private drawStroke(avatar: Avatar, stroke: PaintStroke): void {
     const surface = avatar.paintSurfaces.get(stroke.part) ?? avatar.paintSurfaces.get("body");
     if (!surface) return;
+    if (surface.uvPaintLayer) {
+      if (!drawProjectedFaceStroke(surface, stroke)) drawUvPaintDot(surface, stroke);
+      surface.texture.needsUpdate = true;
+      return;
+    }
     const x = stroke.u * surface.canvas.width;
     const y = (1 - stroke.v) * surface.canvas.height;
     const radius = Math.max(2, stroke.size * surface.canvas.width);
@@ -789,6 +1066,10 @@ export class WorldRenderer {
       this.camera.position.set(18, 16, 22);
       this.camera.lookAt(0, 1, 0);
     }
+    for (const task of [...this.beforeRenderTasks]) {
+      this.beforeRenderTasks.delete(task);
+      task();
+    }
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -919,10 +1200,177 @@ function disposeObject(object: THREE.Object3D): void {
   });
 }
 
+/**
+ * Keeps the character's normal base color opaque while treating the canvas as
+ * a paint-only RGBA layer. Transparent canvas pixels leave the base untouched.
+ */
+function createPaintLayerMaterial(baseColor: string, texture: THREE.CanvasTexture): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({
+    color: baseColor,
+    map: texture,
+    roughness: 1,
+    metalness: 0
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <map_fragment>",
+      `
+#ifdef USE_MAP
+  vec4 paintLayerColor = texture2D(map, vMapUv);
+  vec3 paintColor = paintLayerColor.rgb / max(paintLayerColor.a, 0.0001);
+  diffuseColor.rgb = mix(diffuseColor.rgb, paintColor, paintLayerColor.a);
+#endif
+      `
+    );
+  };
+  material.customProgramCacheKey = () => "mechfall-transparent-paint-layer-v1";
+  return material;
+}
+
+function drawUvPaintDot(surface: PaintSurface, stroke: PaintStroke): void {
+  const context = surface.context;
+  const x = stroke.u * surface.canvas.width;
+  const y = (1 - stroke.v) * surface.canvas.height;
+  const radius = Math.max(2, stroke.size * surface.canvas.width);
+  context.fillStyle = stroke.color;
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.fill();
+}
+
+function drawProjectedFaceStroke(surface: PaintSurface, stroke: PaintStroke): boolean {
+  if (
+    stroke.face === undefined
+    || !Number.isFinite(stroke.brushUx)
+    || !Number.isFinite(stroke.brushVx)
+    || !Number.isFinite(stroke.brushUy)
+    || !Number.isFinite(stroke.brushVy)
+  ) return false;
+  const geometry = surface.mesh.geometry;
+  const uvs = geometry.getAttribute("uv");
+  const positions = geometry.getAttribute("position");
+  const face = Math.floor(stroke.face);
+  const faceCount = geometry.index ? Math.floor(geometry.index.count / 3) : Math.floor(positions.count / 3);
+  if (!uvs || face < 0 || face >= faceCount) return false;
+  const vertices = paintFaceVertices(geometry, face);
+  const brushDeterminant = stroke.brushUx! * stroke.brushVy! - stroke.brushUy! * stroke.brushVx!;
+  let localEndX = 0;
+  let localEndY = 0;
+  if (Number.isFinite(stroke.brushEndU) && Number.isFinite(stroke.brushEndV) && Math.abs(brushDeterminant) > 1e-10) {
+    const endU = stroke.brushEndU! - stroke.u;
+    const endV = stroke.brushEndV! - stroke.v;
+    localEndX = THREE.MathUtils.clamp((endU * stroke.brushVy! - stroke.brushUy! * endV) / brushDeterminant, -100, 100);
+    localEndY = THREE.MathUtils.clamp((stroke.brushUx! * endV - endU * stroke.brushVx!) / brushDeterminant, -100, 100);
+  }
+  const context = surface.context;
+  context.save();
+  context.beginPath();
+  for (let corner = 0; corner < 3; corner += 1) {
+    const vertex = vertices[corner]!;
+    const x = uvs.getX(vertex) * surface.canvas.width;
+    const y = (1 - uvs.getY(vertex)) * surface.canvas.height;
+    if (corner === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  }
+  context.closePath();
+  context.clip();
+  context.setTransform(
+    stroke.brushUx! * surface.canvas.width,
+    -stroke.brushVx! * surface.canvas.height,
+    stroke.brushUy! * surface.canvas.width,
+    -stroke.brushVy! * surface.canvas.height,
+    stroke.u * surface.canvas.width,
+    (1 - stroke.v) * surface.canvas.height
+  );
+  context.fillStyle = stroke.color;
+  tracePaintCapsule(context, localEndX, localEndY);
+  context.fill();
+  context.restore();
+
+  // Repeat only the touched triangle edges into the atlas padding. Without
+  // this, linear texture filtering pulls transparent texels into the shared
+  // edge and exposes hairline base-color seams through an otherwise solid dab.
+  context.save();
+  context.setTransform(
+    stroke.brushUx! * surface.canvas.width,
+    -stroke.brushVx! * surface.canvas.height,
+    stroke.brushUy! * surface.canvas.width,
+    -stroke.brushVy! * surface.canvas.height,
+    stroke.u * surface.canvas.width,
+    (1 - stroke.v) * surface.canvas.height
+  );
+  tracePaintCapsule(context, localEndX, localEndY);
+  context.clip();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.beginPath();
+  for (let corner = 0; corner < 3; corner += 1) {
+    const vertex = vertices[corner]!;
+    const x = uvs.getX(vertex) * surface.canvas.width;
+    const y = (1 - uvs.getY(vertex)) * surface.canvas.height;
+    if (corner === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  }
+  context.closePath();
+  context.strokeStyle = stroke.color;
+  context.lineWidth = 4;
+  context.lineJoin = "round";
+  context.stroke();
+  context.restore();
+  return true;
+}
+
+function tracePaintCapsule(context: CanvasRenderingContext2D, endX: number, endY: number): void {
+  const length = Math.hypot(endX, endY);
+  context.beginPath();
+  if (length < 1e-5) {
+    context.arc(0, 0, 1, 0, Math.PI * 2);
+    return;
+  }
+  const normalX = -endY / length;
+  const normalY = endX / length;
+  const angle = Math.atan2(endY, endX);
+  context.moveTo(normalX, normalY);
+  context.lineTo(endX + normalX, endY + normalY);
+  context.arc(endX, endY, 1, angle + Math.PI / 2, angle - Math.PI / 2, true);
+  context.lineTo(-normalX, -normalY);
+  context.arc(0, 0, 1, angle - Math.PI / 2, angle + Math.PI / 2, true);
+  context.closePath();
+}
+
+function fillPaintFace(surface: PaintSurface, vertices: readonly [number, number, number], color: string): void {
+  const uvs = surface.mesh.geometry.getAttribute("uv");
+  const context = surface.context;
+  context.beginPath();
+  for (let corner = 0; corner < 3; corner += 1) {
+    const vertex = vertices[corner]!;
+    const x = uvs.getX(vertex) * surface.canvas.width;
+    const y = (1 - uvs.getY(vertex)) * surface.canvas.height;
+    if (corner === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  }
+  context.closePath();
+  context.fillStyle = color;
+  context.fill();
+  context.strokeStyle = color;
+  context.lineWidth = 4;
+  context.lineJoin = "round";
+  context.stroke();
+  surface.texture.needsUpdate = true;
+}
+
+function paintFaceVertices(geometry: THREE.BufferGeometry, face: number): [number, number, number] {
+  return [0, 1, 2].map((corner) => geometry.index?.getX(face * 3 + corner) ?? face * 3 + corner) as [number, number, number];
+}
+
+function roundPaintValue(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 function shortestAngle(from: number, to: number): number {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
 
+const PAINT_TEXTURE_SIZE = 1024;
 const CHARACTER_HEIGHT = 2.45;
 const WALK_CLIP = "ChameleonMan|Walking";
 const RUN_CLIP = "ChameleonMan|Running";

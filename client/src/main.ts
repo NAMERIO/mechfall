@@ -1,3 +1,7 @@
 import "./styles/index.css";
-import "./app/gameApp.ts";
 
+if (new URLSearchParams(window.location.search).has("paintTest")) {
+  void import("./app/paintTestApp.ts");
+} else {
+  void import("./app/gameApp.ts");
+}

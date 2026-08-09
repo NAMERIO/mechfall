@@ -12,11 +12,13 @@
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm --filter @mechfall/server test",
+    "test:paint": "node scripts/run-paint-visual-test.mjs",
     "start": "pnpm --filter @mechfall/server start"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "concurrently": "^9.2.1",
+    "playwright-core": "1.55.0",
     "typescript": "^5.9.2"
   }
 }

@@ -1,4 +1,6 @@
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 12;
+export const MAX_GAME_PACKET_BYTES = 16_384;
+export const MAX_PAINT_STROKES_PER_PACKET = 32;
 
 export const GAME = {
   tickRate: 30,
@@ -52,6 +54,13 @@ export interface PaintStroke {
   part: PaintPart;
   u: number;
   v: number;
+  face?: number;
+  brushUx?: number;
+  brushVx?: number;
+  brushUy?: number;
+  brushVy?: number;
+  brushEndU?: number;
+  brushEndV?: number;
   color: string;
   size: number;
 }

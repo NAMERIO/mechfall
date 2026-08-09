@@ -402,6 +402,45 @@ test("stationary yaw expansion resolves on the wall normal without auto-attachin
   }
 });
 
+test("climbing past a ledge mantles onto the platform without the release shove", async () => {
+  const room = new GameRoom("MNTL01");
+  try {
+    const socket = new TestSocket();
+    const player = room.addHuman(asWebSocket(socket), "Ledge Climber");
+    player.position = { x: SIDE_CONTACT_X, y: 2.72, z: -1 };
+    player.velocity = { x: 0, y: 0, z: 0 };
+    player.yaw = 0;
+    player.cling = { surfaceId: "center-red", normalX: -1, normalZ: 0 };
+
+    room.handleMessage(player.id, {
+      type: "input",
+      input: { sequence: 1, forward: 0, strafe: 0, jump: true, sprint: false, climb: 1, detach: false, yaw: 0 }
+    });
+    const mantled = await waitForPlayer(
+      socket,
+      player.id,
+      (state) => !state.cling && Math.abs(state.position.y - 3) < 0.001,
+      "mantle onto center-red"
+    );
+    assert.ok(Math.abs(mantled.position.x - -6.47) < 0.001);
+    assert.ok(Math.abs(mantled.velocity.x) < 0.001, "mantle must not apply the old outward release velocity");
+    assert.ok(Math.abs(mantled.velocity.y) < 0.001);
+
+    await delay(100);
+    const supported = latestPlayer(socket, player.id)!;
+    assert.ok(Math.abs(supported.position.y - 3) < 0.001, "mantled player must remain supported on top");
+
+    room.handleMessage(player.id, {
+      type: "input",
+      input: { sequence: 2, forward: 0, strafe: 0, jump: true, sprint: false, climb: 0, detach: false, yaw: 0 }
+    });
+    const jumped = await waitForPlayer(socket, player.id, (state) => state.position.y > 3.02, "jump from mantled platform");
+    assert.ok(jumped.velocity.y > 0);
+  } finally {
+    room.destroy();
+  }
+});
+
 test("residual movement still auto-attaches on actual wall contact", async () => {
   const room = new GameRoom("CLING2");
   try {

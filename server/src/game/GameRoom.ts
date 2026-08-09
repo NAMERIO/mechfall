@@ -224,7 +224,13 @@ export class GameRoom {
           this.releaseCling(player, now);
         } else {
           const vertical = queuedClimbUp ? 1 : player.input.climb;
-          if (moveClingingBody(player, player.cling, player.yaw, strafe, vertical, dt)) {
+          const clingMove = moveClingingBody(player, player.cling, player.yaw, strafe, vertical, dt);
+          if (clingMove === "attached") {
+            continue;
+          }
+          if (clingMove === "mantled") {
+            player.cling = undefined;
+            player.clingDetachedUntil = now + CLING_REATTACH_DELAY_MS;
             continue;
           }
           this.releaseCling(player, now);
@@ -248,7 +254,7 @@ export class GameRoom {
           && !detachRequested
           && collision) {
         player.cling = collision;
-        if (!moveClingingBody(player, collision, player.yaw, 0, 0, 0)) {
+        if (moveClingingBody(player, collision, player.yaw, 0, 0, 0) !== "attached") {
           player.cling = undefined;
         }
       }

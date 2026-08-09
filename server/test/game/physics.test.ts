@@ -93,8 +93,8 @@ test("rotating while clung keeps every face attached at the new projected distan
       velocity: { x: 0, y: 0, z: 0 }
     };
     const cling = { surfaceId: "center-red", normalX: face.normalX, normalZ: face.normalZ };
-    assert.equal(moveClingingBody(body, cling, face.backYaw, 0, 0, 1 / 30), true);
-    assert.equal(moveClingingBody(body, cling, face.sideYaw, 0, 0, 1 / 30), true);
+    assert.equal(moveClingingBody(body, cling, face.backYaw, 0, 0, 1 / 30), "attached");
+    assert.equal(moveClingingBody(body, cling, face.sideYaw, 0, 0, 1 / 30), "attached");
     approximatelyEqual(body.position.x, face.faceX + face.normalX * GAME.playerHalfWidth);
     approximatelyEqual(body.position.z, face.faceZ + face.normalZ * GAME.playerHalfWidth);
     approximatelyEqual(body.velocity.x * face.normalX + body.velocity.z * face.normalZ, 0);
@@ -135,7 +135,7 @@ test("stationary rotation depenetrates on the wall normal without becoming a col
 test("a player can remain fixed on a known collided crate face", () => {
   const body = { position: { x: -7.5, y: 0.8, z: -1 }, velocity: { x: 0, y: -5, z: 0 } };
   const cling = { surfaceId: "center-red", normalX: -1, normalZ: 0 };
-  assert.equal(moveClingingBody(body, cling, 0, 0, 0, 1 / 30), true);
+  assert.equal(moveClingingBody(body, cling, 0, 0, 0, 1 / 30), "attached");
   assert.equal(body.position.y, 0.8);
   assert.deepEqual(body.velocity, { x: 0, y: 0, z: 0 });
 });
@@ -149,7 +149,7 @@ test("an expanded-AABB corner collision is not pulled sideways onto the raw face
   assert.deepEqual(collision, { surfaceId: "center-red", normalX: -1, normalZ: 0 });
   const collidedTangent = body.position.z;
 
-  assert.equal(moveClingingBody(body, collision!, 0, 0, 0, 0), false);
+  assert.equal(moveClingingBody(body, collision!, 0, 0, 0, 0), "released");
   assert.equal(body.position.z, collidedTangent);
 });
 
@@ -169,19 +169,19 @@ test("Space/Shift climb vertically and A/D slide both ways along a clung surface
   const cling = { surfaceId: "center-red", normalX: -1, normalZ: 0 };
   const step = 0.1;
 
-  assert.equal(moveClingingBody(body, cling, 0, 0, 1, step), true);
+  assert.equal(moveClingingBody(body, cling, 0, 0, 1, step), "attached");
   approximatelyEqual(body.position.y, 1 + GAME.climbSpeed * step);
   approximatelyEqual(body.velocity.y, GAME.climbSpeed);
 
-  assert.equal(moveClingingBody(body, cling, 0, 0, -1, step), true);
+  assert.equal(moveClingingBody(body, cling, 0, 0, -1, step), "attached");
   approximatelyEqual(body.position.y, 1);
   approximatelyEqual(body.velocity.y, -GAME.climbSpeed);
 
-  assert.equal(moveClingingBody(body, cling, 0, 1, 0, step), true);
+  assert.equal(moveClingingBody(body, cling, 0, 1, 0, step), "attached");
   approximatelyEqual(body.position.z, -1 + GAME.climbSpeed * step);
   approximatelyEqual(body.velocity.z, GAME.climbSpeed);
 
-  assert.equal(moveClingingBody(body, cling, 0, -1, 0, step), true);
+  assert.equal(moveClingingBody(body, cling, 0, -1, 0, step), "attached");
   approximatelyEqual(body.position.z, -1);
   approximatelyEqual(body.velocity.z, -GAME.climbSpeed);
   assert.equal(body.position.x, -7.5);
@@ -198,7 +198,7 @@ test("A/D follow the oriented tangent on every vertical face", () => {
   for (const face of faces) {
     const body = { position: { ...face.body }, velocity: { x: 0, y: 0, z: 0 } };
     const start = { ...body.position };
-    assert.equal(moveClingingBody(body, face.cling, face.yaw, 1, 0, 0.1), true);
+    assert.equal(moveClingingBody(body, face.cling, face.yaw, 1, 0, 0.1), "attached");
     const tangentX = face.cling.normalZ;
     const tangentZ = -face.cling.normalX;
     approximatelyEqual(body.position.x - start.x, tangentX * GAME.climbSpeed * 0.1);
@@ -206,7 +206,7 @@ test("A/D follow the oriented tangent on every vertical face", () => {
     approximatelyEqual(body.velocity.x, tangentX * GAME.climbSpeed);
     approximatelyEqual(body.velocity.z, tangentZ * GAME.climbSpeed);
 
-    assert.equal(moveClingingBody(body, face.cling, face.yaw, -1, 0, 0.1), true);
+    assert.equal(moveClingingBody(body, face.cling, face.yaw, -1, 0, 0.1), "attached");
     approximatelyEqual(body.position.x, start.x);
     approximatelyEqual(body.position.z, start.z);
     approximatelyEqual(body.velocity.x, -tangentX * GAME.climbSpeed);
@@ -230,15 +230,86 @@ test("signed forward-axis input detaches only when its world direction points aw
   }
 });
 
-test("leaving a cling edge clamps position and clears blocked velocity", () => {
+test("leaving a side edge releases while climbing over the top mantles", () => {
   const cling = { surfaceId: "center-red", normalX: -1, normalZ: 0 };
   const sideEdge = { position: { x: -7.5, y: 1, z: 0 }, velocity: { x: 0, y: 0, z: 0 } };
-  assert.equal(moveClingingBody(sideEdge, cling, 0, 1, 0, 1 / 30), false);
+  assert.equal(moveClingingBody(sideEdge, cling, 0, 1, 0, 1 / 30), "released");
   assert.equal(sideEdge.position.z, 0);
   approximatelyEqual(sideEdge.velocity.z, 0);
 
   const topEdge = { position: { x: -7.5, y: 2.72, z: -1 }, velocity: { x: 0, y: 0, z: 0 } };
-  assert.equal(moveClingingBody(topEdge, cling, 0, 0, 1, 1 / 30), false);
-  approximatelyEqual(topEdge.position.y, 2.72);
+  assert.equal(moveClingingBody(topEdge, cling, 0, 0, 1, 1 / 30), "mantled");
+  approximatelyEqual(topEdge.position.x, -6.47);
+  approximatelyEqual(topEdge.position.y, 3);
+  approximatelyEqual(topEdge.velocity.x, 0);
   approximatelyEqual(topEdge.velocity.y, 0);
+});
+
+test("mantling crosses each crate face and settles fully on top", () => {
+  const faces = [
+    { position: { x: -7.5, y: 2.72, z: -1 }, normalX: -1, normalZ: 0, expectedX: -6.47, expectedZ: -1 },
+    { position: { x: -1.5, y: 2.72, z: -1 }, normalX: 1, normalZ: 0, expectedX: -2.53, expectedZ: -1 },
+    { position: { x: -4.5, y: 2.72, z: -2.14 }, normalX: 0, normalZ: -1, expectedX: -4.5, expectedZ: -1.83 },
+    { position: { x: -4.5, y: 2.72, z: 0.14 }, normalX: 0, normalZ: 1, expectedX: -4.5, expectedZ: -0.17 }
+  ] as const;
+
+  for (const face of faces) {
+    const body = { position: { ...face.position }, velocity: { x: 0, y: 0, z: 0 } };
+    const cling = { surfaceId: "center-red", normalX: face.normalX, normalZ: face.normalZ };
+    assert.equal(moveClingingBody(body, cling, 0, 0, 1, 1 / 30), "mantled");
+    approximatelyEqual(body.position.x, face.expectedX);
+    approximatelyEqual(body.position.z, face.expectedZ);
+    approximatelyEqual(body.position.y, 3);
+    assert.deepEqual(body.velocity, { x: 0, y: 0, z: 0 });
+  }
+});
+
+test("a stacked obstacle blocks the mantle without releasing or pushing", () => {
+  const body = { position: { x: 13.5, y: 1.72, z: -10 }, velocity: { x: 0, y: 0, z: 0 } };
+  const cling = { surfaceId: "yellow-stack-a", normalX: 1, normalZ: 0 };
+  assert.equal(moveClingingBody(body, cling, 0, 0, 1, 1 / 30), "attached");
+  approximatelyEqual(body.position.x, 13.5);
+  approximatelyEqual(body.position.y, 1.72);
+  approximatelyEqual(body.velocity.x, 0);
+  approximatelyEqual(body.velocity.y, 0);
+  approximatelyEqual(body.velocity.z, 0);
+});
+
+test("falling lands on an object top and remains supported", () => {
+  const body = { position: { x: -2, y: 1.6, z: -13 }, velocity: { x: 0, y: -4, z: 0 } };
+  moveBody(body, 0, 0, 0, false, 0, 0.1);
+  approximatelyEqual(body.position.y, 1.3);
+  approximatelyEqual(body.velocity.y, 0);
+
+  for (let index = 0; index < 60; index += 1) moveBody(body, 0, 0, 0, false, 0, 1 / 30);
+  approximatelyEqual(body.position.y, 1.3);
+  approximatelyEqual(body.velocity.y, 0);
+});
+
+test("a player can jump from a platform and naturally fall after walking off", () => {
+  const jumper = { position: { x: -2, y: 1.3, z: -13 }, velocity: { x: 0, y: 0, z: 0 } };
+  moveBody(jumper, 0, 0, 0, true, 0, 1 / 30);
+  assert.ok(jumper.position.y > 1.3);
+  assert.ok(jumper.velocity.y > 0);
+
+  const walker = { position: { x: -5.3, y: 1.3, z: -13 }, velocity: { x: 0, y: 0, z: 0 } };
+  moveBody(walker, -1, 0, 6, false, 0, 0.2);
+  assert.ok(walker.position.y < 1.3);
+  assert.ok(walker.velocity.y < 0);
+  for (let index = 0; index < 80; index += 1) moveBody(walker, 0, 0, 0, false, 0, 1 / 30);
+  approximatelyEqual(walker.position.y, 0);
+});
+
+test("the inner half of an arena wall can be mantled without escaping the arena", () => {
+  const yaw = Math.PI / 2;
+  const body = { position: { x: -20.36, y: 4.72, z: 0 }, velocity: { x: 0, y: 0, z: 0 } };
+  const cling = { surfaceId: "west", normalX: 1, normalZ: 0 };
+  assert.equal(moveClingingBody(body, cling, yaw, 0, 1, 1 / 30), "mantled");
+  approximatelyEqual(body.position.x, -20.67);
+  approximatelyEqual(body.position.y, 5);
+  assert.deepEqual(body.velocity, { x: 0, y: 0, z: 0 });
+
+  for (let index = 0; index < 30; index += 1) moveBody(body, 0, 0, 0, false, yaw, 1 / 30);
+  approximatelyEqual(body.position.y, 5);
+  assert.ok(body.position.x >= -21 + GAME.playerHalfDepth);
 });

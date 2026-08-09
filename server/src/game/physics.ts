@@ -5,6 +5,8 @@ export interface PhysicsBody {
   velocity: Vec3;
 }
 
+export type ClingMoveResult = "attached" | "released" | "mantled";
+
 export function moveBody(
   body: PhysicsBody,
   wishX: number,
@@ -22,7 +24,7 @@ export function moveBody(
   body.velocity.x += (normalizedX * speed - body.velocity.x) * response;
   body.velocity.z += (normalizedZ * speed - body.velocity.z) * response;
 
-  const grounded = body.position.y <= 0.001;
+  const grounded = isGrounded(body, yaw);
   if (jump && grounded) body.velocity.y = GAME.jumpSpeed;
   body.velocity.y -= GAME.gravity * dt;
 
@@ -32,14 +34,10 @@ export function moveBody(
   depenetrateBody(body, yaw);
   const xCollision = moveAxis(body, "x", body.velocity.x * dt, yaw);
   const zCollision = moveAxis(body, "z", body.velocity.z * dt, yaw);
-  body.position.y += body.velocity.y * dt;
-  if (body.position.y < 0) {
-    body.position.y = 0;
-    body.velocity.y = 0;
-  }
+  moveVertically(body, yaw, dt);
 
-  const limitX = worldLimit(yaw, 1, 0);
-  const limitZ = worldLimit(yaw, 0, 1);
+  const limitX = worldLimit(yaw, 1, 0, body.position.y);
+  const limitZ = worldLimit(yaw, 0, 1, body.position.y);
   const clampedX = clamp(body.position.x, -limitX, limitX);
   const clampedZ = clamp(body.position.z, -limitZ, limitZ);
   if (clampedX !== body.position.x) body.velocity.x = 0;
@@ -77,9 +75,9 @@ export function moveClingingBody(
   sideways: number,
   vertical: number,
   dt: number
-): boolean {
+): ClingMoveResult {
   const box = WORLD_BOXES.find((candidate) => candidate.solid && candidate.id === cling.surfaceId);
-  if (!box || Math.abs(cling.normalX) + Math.abs(cling.normalZ) !== 1) return false;
+  if (!box || Math.abs(cling.normalX) + Math.abs(cling.normalZ) !== 1) return "released";
   const previousX = body.position.x;
   const previousY = body.position.y;
   const previousZ = body.position.z;
@@ -90,13 +88,13 @@ export function moveClingingBody(
   const minZ = box.position[2] - box.size[2] / 2;
   const maxZ = box.position[2] + box.size[2] / 2;
   const contactDistance = playerContactDistance(yaw, cling.normalX, cling.normalZ);
-  const worldLimitX = worldLimit(yaw, 1, 0);
-  const worldLimitZ = worldLimit(yaw, 0, 1);
+  const worldLimitX = worldLimit(yaw, 1, 0, body.position.y);
+  const worldLimitZ = worldLimit(yaw, 0, 1, body.position.y);
   const rawContactX = cling.normalX < 0 ? minX - contactDistance : cling.normalX > 0 ? maxX + contactDistance : body.position.x;
   const rawContactZ = cling.normalZ < 0 ? minZ - contactDistance : cling.normalZ > 0 ? maxZ + contactDistance : body.position.z;
   const contactX = cling.normalX !== 0 ? clamp(rawContactX, -worldLimitX, worldLimitX) : body.position.x;
   const contactZ = cling.normalZ !== 0 ? clamp(rawContactZ, -worldLimitZ, worldLimitZ) : body.position.z;
-  if (Math.hypot(body.position.x - contactX, body.position.z - contactZ) > CLING_LOST_DISTANCE) return false;
+  if (Math.hypot(body.position.x - contactX, body.position.z - contactZ) > CLING_LOST_DISTANCE) return "released";
 
   const tangentX = cling.normalZ;
   const tangentZ = -cling.normalX;
@@ -105,13 +103,13 @@ export function moveClingingBody(
   const lowest = Math.max(0, minY - CLING_BODY_HEIGHT + CLING_MIN_OVERLAP);
   const highest = Math.max(lowest, maxY - CLING_MIN_OVERLAP);
   if (body.position.y < lowest - CLING_EDGE_RELEASE_EPSILON
-      || body.position.y > highest + CLING_EDGE_RELEASE_EPSILON) return false;
+      || body.position.y > highest + CLING_EDGE_RELEASE_EPSILON) return "released";
   const currentTangent = cling.normalX !== 0 ? body.position.z : body.position.x;
   const tangentWorldLimit = cling.normalX !== 0 ? worldLimitZ : worldLimitX;
   const tangentMin = Math.max(cling.normalX !== 0 ? minZ : minX, -tangentWorldLimit);
   const tangentMax = Math.min(cling.normalX !== 0 ? maxZ : maxX, tangentWorldLimit);
   if (currentTangent < tangentMin - CLING_EDGE_RELEASE_EPSILON
-      || currentTangent > tangentMax + CLING_EDGE_RELEASE_EPSILON) return false;
+      || currentTangent > tangentMax + CLING_EDGE_RELEASE_EPSILON) return "released";
   const tangentDirection = cling.normalX !== 0 ? tangentZ : tangentX;
   const tangentDelta = tangentDirection * sideSpeed * dt;
   const nextTangent = currentTangent + tangentDelta;
@@ -139,7 +137,92 @@ export function moveClingingBody(
     || (tangentDelta > 0 && nextTangent > tangentMax + CLING_EDGE_RELEASE_EPSILON);
   const leavingBottom = climbSpeed < 0 && nextY < lowest - CLING_EDGE_RELEASE_EPSILON;
   const leavingTop = climbSpeed > 0 && nextY > highest + CLING_EDGE_RELEASE_EPSILON;
-  if (leavingSide || leavingBottom || leavingTop) return false;
+  if (leavingTop && !leavingSide) {
+    const mantleDistance = contactDistance * 2 + MANTLE_TOP_INSET;
+    const topLimitX = worldLimit(yaw, 1, 0, maxY);
+    const topLimitZ = worldLimit(yaw, 0, 1, maxY);
+    const targetX = clamp(contactX - cling.normalX * mantleDistance, -topLimitX, topLimitX);
+    const targetZ = clamp(contactZ - cling.normalZ * mantleDistance, -topLimitZ, topLimitZ);
+    if (canOccupyMantleTarget(box.id, targetX, targetZ, maxY, yaw)) {
+      body.position.x = targetX;
+      body.position.z = targetZ;
+      body.position.y = maxY;
+      body.velocity.x = 0;
+      body.velocity.y = 0;
+      body.velocity.z = 0;
+      return "mantled";
+    }
+    body.velocity.y = 0;
+    return "attached";
+  }
+  if (leavingSide || leavingBottom) return "released";
+  return "attached";
+}
+
+function moveVertically(body: PhysicsBody, yaw: number, dt: number): void {
+  const previousY = body.position.y;
+  const nextY = previousY + body.velocity.y * dt;
+  if (body.velocity.y <= 0) {
+    let landingY = previousY >= -PLATFORM_EPSILON && nextY <= PLATFORM_EPSILON ? 0 : -Infinity;
+    for (const box of WORLD_BOXES) {
+      if (!box.solid || !footprintOverlapsTop(body, yaw, box)) continue;
+      const top = box.position[1] + box.size[1] / 2;
+      if (previousY + PLATFORM_EPSILON < top || nextY > top + PLATFORM_EPSILON) continue;
+      landingY = Math.max(landingY, top);
+    }
+    if (landingY > -Infinity) {
+      body.position.y = landingY;
+      body.velocity.y = 0;
+      return;
+    }
+  }
+
+  body.position.y = Math.max(0, nextY);
+  if (body.position.y === 0 && body.velocity.y < 0) body.velocity.y = 0;
+}
+
+function isGrounded(body: PhysicsBody, yaw: number): boolean {
+  if (Math.abs(body.position.y) <= PLATFORM_EPSILON) return true;
+  for (const box of WORLD_BOXES) {
+    if (!box.solid || !footprintOverlapsTop(body, yaw, box)) continue;
+    const top = box.position[1] + box.size[1] / 2;
+    if (Math.abs(body.position.y - top) <= PLATFORM_EPSILON) return true;
+  }
+  return false;
+}
+
+function footprintOverlapsTop(body: PhysicsBody, yaw: number, box: (typeof WORLD_BOXES)[number]): boolean {
+  return footprintOverlapsTopAt(body.position.x, body.position.z, yaw, box, PLATFORM_EPSILON);
+}
+
+function footprintOverlapsTopAt(
+  x: number,
+  z: number,
+  yaw: number,
+  box: (typeof WORLD_BOXES)[number],
+  minimumOverlap: number
+): boolean {
+  const extentX = playerContactDistance(yaw, 1, 0);
+  const extentZ = playerContactDistance(yaw, 0, 1);
+  const minX = box.position[0] - box.size[0] / 2;
+  const maxX = box.position[0] + box.size[0] / 2;
+  const minZ = box.position[2] - box.size[2] / 2;
+  const maxZ = box.position[2] + box.size[2] / 2;
+  return x + extentX > minX + minimumOverlap
+    && x - extentX < maxX - minimumOverlap
+    && z + extentZ > minZ + minimumOverlap
+    && z - extentZ < maxZ - minimumOverlap;
+}
+
+function canOccupyMantleTarget(surfaceId: string, x: number, z: number, feetY: number, yaw: number): boolean {
+  for (const box of WORLD_BOXES) {
+    if (!box.solid || box.id === surfaceId) continue;
+    const bottom = box.position[1] - box.size[1] / 2;
+    const top = box.position[1] + box.size[1] / 2;
+    const verticallyBlocked = feetY < top - PLATFORM_EPSILON
+      && feetY + CLING_BODY_HEIGHT > bottom + PLATFORM_EPSILON;
+    if (verticallyBlocked && footprintOverlapsTopAt(x, z, yaw, box, PLATFORM_EPSILON)) return false;
+  }
   return true;
 }
 
@@ -220,9 +303,10 @@ export function playerContactDistance(yaw: number, normalX: number, normalZ: num
   );
 }
 
-function worldLimit(yaw: number, normalX: number, normalZ: number): number {
+function worldLimit(yaw: number, normalX: number, normalZ: number, feetY: number): number {
   const innerWallFace = WORLD_SIZE / 2 - WORLD_WALL_THICKNESS / 2;
-  return innerWallFace - playerContactDistance(yaw, normalX, normalZ);
+  const boundary = feetY >= ARENA_WALL_TOP - PLATFORM_EPSILON ? WORLD_SIZE / 2 : innerWallFace;
+  return boundary - playerContactDistance(yaw, normalX, normalZ);
 }
 
 export function distanceSquared(a: Vec3, b: Vec3): number {
@@ -237,3 +321,8 @@ const CLING_DETACH_THRESHOLD = 0.55;
 const CLING_EDGE_RELEASE_EPSILON = 0.001;
 const CLING_BODY_HEIGHT = 2.3;
 const CLING_MIN_OVERLAP = 0.28;
+const MANTLE_TOP_INSET = 0.03;
+const PLATFORM_EPSILON = 0.001;
+const ARENA_WALL_TOP = Math.max(
+  ...WORLD_BOXES.filter((box) => box.kind === "wall").map((box) => box.position[1] + box.size[1] / 2)
+);

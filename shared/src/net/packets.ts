@@ -13,6 +13,7 @@ export enum WsPacketType {
   Shoot = 7,
   Whistle = 8,
   Ping = 9,
+  StartGame = 10,
 
   Welcome = 64,
   Snapshot = 65,
@@ -30,6 +31,7 @@ const CLIENT_PACKET_TYPES: Record<ClientMessage["type"], WsPacketType> = {
   clearPaint: WsPacketType.ClearPaint,
   pose: WsPacketType.Pose,
   shoot: WsPacketType.Shoot,
+  startGame: WsPacketType.StartGame,
   whistle: WsPacketType.Whistle,
   ping: WsPacketType.Ping
 };

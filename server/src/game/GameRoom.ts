@@ -16,11 +16,10 @@ import {
   type PlayerState,
   type PaintStroke,
   type Pose,
-  type RoundPhase,
   type RoundState,
   type ServerMessage
 } from "@mechfall/shared";
-import { distanceSquared, moveBody } from "./physics.js";
+import { moveBody } from "./physics.js";
 
 interface RoomPlayer extends PlayerState {
   socket?: WebSocket;
@@ -30,12 +29,7 @@ interface RoomPlayer extends PlayerState {
   lastWhistleAt: number;
   lastPaintAt: number;
   paintStrokes: PaintStroke[];
-  botTarget: { x: number; z: number };
-  botThinkAt: number;
 }
-
-const BOT_NAMES = ["Moss", "Pebble", "Tangerine"];
-const BOT_COLORS = ["#658f55", "#8067a8", "#d97843"];
 
 export class GameRoom {
   readonly id: string;
@@ -47,29 +41,30 @@ export class GameRoom {
   private snapshotTimer: NodeJS.Timeout;
   private pendingEvent?: GameEvent;
   private nextHunterOffset = 0;
-  private round: RoundState = { phase: "waiting", endsAt: Date.now() + GAME.warmupSeconds * 1000, round: 0 };
+  private ownerId?: string;
+  private round: RoundState = { phase: "waiting", endsAt: 0, round: 0 };
 
   constructor(id = randomUUID().slice(0, 6).toUpperCase()) {
     this.id = id;
-    for (let i = 0; i < BOT_NAMES.length; i += 1) this.addBot(i);
     this.tickTimer = setInterval(() => this.tick(1 / GAME.tickRate), 1000 / GAME.tickRate);
     this.snapshotTimer = setInterval(() => this.broadcastSnapshot(), 1000 / GAME.snapshotRate);
   }
 
   get humanCount(): number {
-    return [...this.players.values()].filter((player) => !player.bot).length;
+    return this.players.size;
   }
 
   get full(): boolean {
-    return this.humanCount >= GAME.maxPlayers - BOT_NAMES.length;
+    return this.humanCount >= GAME.maxPlayers;
   }
 
   addHuman(socket: WebSocket, name: string): RoomPlayer {
     const id = randomUUID().slice(0, 8);
-    const player = this.createPlayer(id, sanitizeName(name), false);
+    const player = this.createPlayer(id, sanitizeName(name));
     player.socket = socket;
     player.role = this.round.phase === "waiting" ? "hider" : "spectator";
     this.players.set(id, player);
+    this.ownerId ??= id;
     this.lastHumanAt = Date.now();
     this.pendingEvent = { type: "join", player: player.name };
     this.send(socket, { type: "welcome", id, gameId: this.id, protocol: PROTOCOL_VERSION });
@@ -83,8 +78,9 @@ export class GameRoom {
 
   removeHuman(playerId: string): void {
     const player = this.players.get(playerId);
-    if (!player || player.bot) return;
+    if (!player) return;
     this.players.delete(playerId);
+    if (this.ownerId === playerId) this.ownerId = this.players.keys().next().value as string | undefined;
     this.lastHumanAt = Date.now();
     this.pendingEvent = { type: "leave", player: player.name };
   }
@@ -102,6 +98,7 @@ export class GameRoom {
     }
     if (message.type === "pose" && player.role === "hider" && player.alive && isPose(message.pose)) player.pose = message.pose;
     if (message.type === "shoot") this.tryShoot(player, message.yaw, message.pitch);
+    if (message.type === "startGame") this.tryStartGame(player.id);
     if (message.type === "whistle") this.tryWhistle(player);
     if (message.type === "ping") this.send(player.socket, { type: "pong", sentAt: Number(message.sentAt) || 0, serverTime: Date.now() });
   }
@@ -112,7 +109,7 @@ export class GameRoom {
     for (const player of this.players.values()) player.socket?.close(1001, "Room closed");
   }
 
-  private createPlayer(id: string, name: string, bot: boolean): RoomPlayer {
+  private createPlayer(id: string, name: string): RoomPlayer {
     const spawn = SPAWN_POINTS[this.players.size % SPAWN_POINTS.length] ?? [0, 0, 0];
     return {
       id,
@@ -122,26 +119,18 @@ export class GameRoom {
       yaw: 0,
       role: "hider",
       pose: "stand",
-      color: bot ? BOT_COLORS[this.players.size % BOT_COLORS.length] ?? "#f5f0df" : "#f5f0df",
+      color: "#f5f0df",
       alive: true,
       score: 0,
       tags: 0,
-      bot,
       whistlingUntil: 0,
       input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, yaw: 0 },
       lastInputAt: Date.now(),
       lastShotAt: 0,
       lastWhistleAt: 0,
       lastPaintAt: 0,
-      paintStrokes: [],
-      botTarget: { x: spawn[0], z: spawn[2] },
-      botThinkAt: 0
+      paintStrokes: []
     };
-  }
-
-  private addBot(index: number): void {
-    const bot = this.createPlayer(`bot-${index}`, BOT_NAMES[index] ?? `Bot ${index + 1}`, true);
-    this.players.set(bot.id, bot);
   }
 
   private applyInput(player: RoomPlayer, input: InputPayload): void {
@@ -189,10 +178,9 @@ export class GameRoom {
 
     for (const player of this.players.values()) {
       if (!player.alive || player.role === "spectator") continue;
-      if (player.bot) this.updateBot(player, now);
 
       const frozen = this.round.phase === "results" || (this.round.phase === "hiding" && player.role === "hunter");
-      const stale = !player.bot && now - player.lastInputAt > GAME.inputTimeoutMs;
+      const stale = now - player.lastInputAt > GAME.inputTimeoutMs;
       const forward = frozen || stale ? 0 : player.input.forward;
       const strafe = frozen || stale ? 0 : player.input.strafe;
       const sin = Math.sin(player.yaw);
@@ -211,13 +199,20 @@ export class GameRoom {
   }
 
   private updateRound(now: number): void {
-    if (this.humanCount === 0) {
-      this.round = { phase: "waiting", endsAt: now + GAME.warmupSeconds * 1000, round: this.round.round };
+    if (this.humanCount < GAME.minPlayers) {
+      if (this.round.phase !== "waiting") this.returnToLobby();
       return;
     }
 
+    if (this.round.phase === "waiting") return;
+
     if (this.round.phase === "hunting") {
+      const huntersRemain = [...this.players.values()].some((player) => player.role === "hunter" && player.alive);
       const hidersRemain = [...this.players.values()].some((player) => player.role === "hider" && player.alive);
+      if (!huntersRemain) {
+        this.round = { phase: "results", endsAt: now + GAME.resultsSeconds * 1000, round: this.round.round, winner: "hiders" };
+        return;
+      }
       if (!hidersRemain) {
         this.round = { phase: "results", endsAt: now + GAME.resultsSeconds * 1000, round: this.round.round, winner: "hunters" };
         return;
@@ -225,12 +220,28 @@ export class GameRoom {
     }
 
     if (now < this.round.endsAt) return;
-    const next: Record<RoundPhase, RoundPhase> = { waiting: "hiding", hiding: "hunting", hunting: "results", results: "hiding" };
-    const nextPhase = next[this.round.phase];
+    if (this.round.phase === "hiding") {
+      this.round = { phase: "hunting", endsAt: now + GAME.huntingSeconds * 1000, round: this.round.round };
+    } else if (this.round.phase === "hunting") {
+      this.round = { phase: "results", endsAt: now + GAME.resultsSeconds * 1000, round: this.round.round, winner: "hiders" };
+    } else if (this.round.phase === "results") {
+      this.returnToLobby();
+    }
+  }
 
-    if (nextPhase === "hiding") this.beginRound(now);
-    else if (nextPhase === "hunting") this.round = { phase: "hunting", endsAt: now + GAME.huntingSeconds * 1000, round: this.round.round };
-    else if (nextPhase === "results") this.round = { phase: "results", endsAt: now + GAME.resultsSeconds * 1000, round: this.round.round, winner: "hiders" };
+  private tryStartGame(playerId: string): void {
+    if (playerId !== this.ownerId || this.round.phase !== "waiting" || this.humanCount < GAME.minPlayers) return;
+    this.beginRound(Date.now());
+  }
+
+  private returnToLobby(): void {
+    for (const player of this.players.values()) {
+      player.role = "hider";
+      player.alive = true;
+      player.pose = "stand";
+      player.velocity = { x: 0, y: 0, z: 0 };
+    }
+    this.round = { phase: "waiting", endsAt: 0, round: this.round.round };
   }
 
   private beginRound(now: number): void {
@@ -327,64 +338,6 @@ export class GameRoom {
     this.pendingEvent = { type: "whistle", player: player.name };
   }
 
-  private updateBot(bot: RoomPlayer, now: number): void {
-    if (bot.role === "hunter" && this.round.phase === "hunting") {
-      const target = this.nearest(bot, (player) => player.role === "hider" && player.alive);
-      if (target) {
-        this.steerBot(bot, target.position.x, target.position.z);
-        if (distanceSquared(bot.position, target.position) < GAME.shotgunRange * GAME.shotgunRange) this.tryShoot(bot, bot.yaw, -0.22);
-      }
-      return;
-    }
-
-    if (bot.role === "hider" && this.round.phase === "hunting") {
-      const hunter = this.nearest(bot, (player) => player.role === "hunter" && player.alive);
-      if (hunter && distanceSquared(bot.position, hunter.position) < 70) {
-        this.steerBot(bot, bot.position.x + (bot.position.x - hunter.position.x) * 3, bot.position.z + (bot.position.z - hunter.position.z) * 3);
-        return;
-      }
-    }
-
-    if (now > bot.botThinkAt) {
-      bot.botThinkAt = now + 2_000 + Math.random() * 3_000;
-      bot.botTarget = { x: Math.random() * 34 - 17, z: Math.random() * 34 - 17 };
-      if (bot.role === "hider") {
-        const box = WORLD_BOXES[Math.floor(Math.random() * WORLD_BOXES.length)];
-        if (box) bot.color = box.color;
-        bot.pose = Math.random() > 0.55 ? "fetal" : "wideSquat";
-      }
-    }
-    this.steerBot(bot, bot.botTarget.x, bot.botTarget.z);
-  }
-
-  private steerBot(bot: RoomPlayer, targetX: number, targetZ: number): void {
-    const dx = targetX - bot.position.x;
-    const dz = targetZ - bot.position.z;
-    if (Math.hypot(dx, dz) < 0.6) {
-      bot.input.forward = 0;
-      bot.input.strafe = 0;
-      return;
-    }
-    bot.yaw = Math.atan2(-dx, -dz);
-    bot.input.forward = 1;
-    bot.input.strafe = 0;
-    bot.input.yaw = bot.yaw;
-  }
-
-  private nearest(origin: RoomPlayer, filter: (player: RoomPlayer) => boolean): RoomPlayer | undefined {
-    let result: RoomPlayer | undefined;
-    let best = Number.POSITIVE_INFINITY;
-    for (const candidate of this.players.values()) {
-      if (candidate === origin || !filter(candidate)) continue;
-      const distance = distanceSquared(origin.position, candidate.position);
-      if (distance < best) {
-        best = distance;
-        result = candidate;
-      }
-    }
-    return result;
-  }
-
   private broadcastSnapshot(): void {
     this.sequence += 1;
     for (const player of this.players.values()) if (player.socket?.readyState === 1) this.sendSnapshot(player);
@@ -398,7 +351,8 @@ export class GameRoom {
       sequence: this.sequence,
       selfId: player.id,
       gameId: this.id,
-      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, botTarget: _botTarget, botThinkAt: _botThinkAt, ...state }) => state),
+      ownerId: this.ownerId,
+      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, ...state }) => state),
       round: this.round,
       event: this.pendingEvent
     });

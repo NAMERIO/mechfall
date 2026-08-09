@@ -38,7 +38,7 @@ pnpm --filter @mechfall/client dev
 pnpm --filter @mechfall/server dev
 ```
 
-Three server-controlled bots are added to each game so local matches can be tested with one browser. Open another browser tab and enter the same six-character game ID to test multiplayer.
+Games contain human players only. A game needs at least two connected players; the first player is the owner and chooses when to start. If the owner leaves, ownership transfers to the next connected player. Open another browser tab and enter the same six-character game ID to test multiplayer locally.
 
 Leave the **GAME ID** field empty to find a public game. Enter an existing ID to join that exact game, or share the generated `?gameId=ABC123` URL. Clicking the game ID in the HUD copies it.
 

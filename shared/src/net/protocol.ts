@@ -1,9 +1,10 @@
-export const PROTOCOL_VERSION = 8;
+export const PROTOCOL_VERSION = 9;
 
 export const GAME = {
   tickRate: 30,
   snapshotRate: 20,
   maxPlayers: 12,
+  minPlayers: 2,
   warmupSeconds: 8,
   hidingSeconds: 22,
   huntingSeconds: 120,
@@ -78,7 +79,6 @@ export interface PlayerState {
   alive: boolean;
   score: number;
   tags: number;
-  bot: boolean;
   whistlingUntil: number;
 }
 
@@ -95,6 +95,7 @@ export interface ServerSnapshot {
   sequence: number;
   selfId: string;
   gameId: string;
+  ownerId?: string;
   players: PlayerState[];
   round: RoundState;
   event?: GameEvent;
@@ -123,6 +124,7 @@ export type ClientMessage =
   | { type: "clearPaint" }
   | { type: "pose"; pose: Pose }
   | { type: "shoot"; yaw: number; pitch: number }
+  | { type: "startGame" }
   | { type: "whistle" }
   | { type: "ping"; sentAt: number };
 

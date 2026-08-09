@@ -45,6 +45,7 @@ const phaseScreen = element<HTMLElement>("#phase-screen");
 const phaseKicker = element<HTMLElement>("#phase-kicker");
 const phaseTitle = element<HTMLElement>("#phase-title");
 const phaseCopy = element<HTMLElement>("#phase-copy");
+const startGameButton = element<HTMLButtonElement>("#start-game-button");
 const results = element<HTMLElement>("#results");
 const resultTitle = element<HTMLElement>("#result-title");
 const resultCopy = element<HTMLElement>("#result-copy");
@@ -94,6 +95,7 @@ gameIdInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") void startGame();
 });
 gameCode.closest(".room-chip")?.addEventListener("click", () => void copyGameId());
+startGameButton.addEventListener("click", requestRoundStart);
 colorInput.addEventListener("input", () => selectPaintColor(colorInput.value));
 paintButton.addEventListener("click", togglePaintMode);
 poseButton.addEventListener("click", togglePoseMenu);
@@ -263,21 +265,28 @@ function updateHud(snapshot: ServerSnapshot): void {
   const phaseDuration = snapshot.round.phase === "hiding" ? GAME.hidingSeconds : snapshot.round.phase === "hunting" ? GAME.huntingSeconds : snapshot.round.phase === "results" ? GAME.resultsSeconds : GAME.warmupSeconds;
   timerFill.style.width = `${Math.min(100, remaining / (phaseDuration * 10))}%`;
   const hiders = snapshot.players.filter((player) => player.role === "hider" && player.alive).length;
-  aliveCount.textContent = `${hiders} HIDER${hiders === 1 ? "" : "S"}`;
+  aliveCount.textContent = snapshot.round.phase === "waiting"
+    ? `${snapshot.players.length} PLAYER${snapshot.players.length === 1 ? "" : "S"}`
+    : `${hiders} HIDER${hiders === 1 ? "" : "S"}`;
   pingLabel.textContent = `${connection?.latency ?? 0} MS`;
   gameCode.textContent = snapshot.gameId;
   score.textContent = String(self.score).padStart(4, "0");
 
-  const displayRole = self.role === "spectator" ? "SPECTATING" : self.role.toUpperCase();
+  const isLobbyOwner = snapshot.round.phase === "waiting" && snapshot.ownerId === snapshot.selfId;
+  const displayRole = isLobbyOwner ? "GAME OWNER" : snapshot.round.phase === "waiting" ? "PLAYER" : self.role === "spectator" ? "SPECTATING" : self.role.toUpperCase();
   roleLabel.textContent = displayRole;
-  roleIcon.textContent = self.role === "hunter" ? "⌖" : self.role === "hider" ? "◈" : "◎";
-  roleTip.textContent = self.role === "hunter"
+  roleIcon.textContent = isLobbyOwner ? "★" : self.role === "hunter" ? "⌖" : self.role === "hider" ? "◈" : "◎";
+  roleTip.textContent = snapshot.round.phase === "waiting"
+    ? isLobbyOwner ? "You control when the next round starts" : "The game owner controls the start"
+    : self.role === "hunter"
     ? "Keep targets centered and click to fire the shotgun"
     : self.role === "hider"
       ? "Press F and hand-paint your camouflage"
       : "You rejoin when the next round begins";
   paintPanel.classList.toggle("hidden", self.role !== "hider");
-  actionHint.textContent = self.role === "hunter" ? "CLICK TO FIRE" : self.role === "hider" ? "PRESS F TO PAINT" : "SPECTATING";
+  actionHint.textContent = snapshot.round.phase === "waiting"
+    ? isLobbyOwner ? "START WHEN EVERYONE IS READY" : "WAITING FOR GAME OWNER"
+    : self.role === "hunter" ? "CLICK TO FIRE" : self.role === "hider" ? "PRESS F TO PAINT" : "SPECTATING";
   paintSwatch.style.backgroundColor = paintColor;
   paintHex.textContent = paintColor.toUpperCase();
   poseLabel.textContent = POSE_LABELS[self.pose];
@@ -288,6 +297,7 @@ function updateHud(snapshot: ServerSnapshot): void {
     if (snapshot.event.type === "shot") world.showShot(snapshot.event.hunterId, snapshot.event.origin, snapshot.event.end);
     showEvent(snapshot.event);
   }
+  updateLobby(snapshot);
   if (snapshot.round.phase !== previousPhase) {
     previousPhase = snapshot.round.phase;
     announcePhase(snapshot);
@@ -308,6 +318,7 @@ function announcePhase(snapshot: ServerSnapshot): void {
   window.clearTimeout(phaseTimeout);
   results.classList.add("hidden");
   phaseScreen.classList.remove("hunter-blind");
+  phaseScreen.classList.toggle("lobby", snapshot.round.phase === "waiting");
   if (snapshot.round.phase === "results") {
     if (paintMode) setPaintMode(false);
     if (poseMenuOpen) setPoseMenu(false);
@@ -320,8 +331,13 @@ function announcePhase(snapshot: ServerSnapshot): void {
     return;
   }
 
+  if (snapshot.round.phase === "waiting") {
+    phaseScreen.classList.remove("hidden");
+    updateLobby(snapshot);
+    return;
+  }
+
   const phaseMessages = {
-    waiting: ["GAME WARMUP", "STAND BY", "New drifters can still join this game."],
     hiding: [`ROUND ${snapshot.round.round}`, "PAINT & HIDE", "Sample a wall. Change your shape. Become scenery."],
     hunting: [`ROUND ${snapshot.round.round}`, "THE HUNT IS ON", "Move carefully. Look twice. Trust no object."]
   } as const;
@@ -330,8 +346,37 @@ function announcePhase(snapshot: ServerSnapshot): void {
   phaseTitle.textContent = copy[1];
   phaseCopy.textContent = copy[2];
   phaseScreen.classList.remove("hidden");
-  phaseTimeout = window.setTimeout(() => phaseScreen.classList.add("hidden"), snapshot.round.phase === "waiting" ? 1_500 : 2_100);
+  phaseTimeout = window.setTimeout(() => phaseScreen.classList.add("hidden"), 2_100);
   playTone(snapshot.round.phase === "hunting" ? 220 : 440, 0.12);
+}
+
+function updateLobby(snapshot: ServerSnapshot): void {
+  if (snapshot.round.phase !== "waiting") {
+    startGameButton.classList.add("hidden");
+    return;
+  }
+  const isOwner = snapshot.selfId === snapshot.ownerId;
+  const enoughPlayers = snapshot.players.length >= GAME.minPlayers;
+  phaseKicker.textContent = `GAME ${snapshot.gameId} · ${snapshot.players.length}/${GAME.maxPlayers} PLAYERS`;
+  phaseTitle.textContent = isOwner ? "YOUR LOBBY" : "GAME LOBBY";
+  phaseCopy.textContent = isOwner
+    ? enoughPlayers
+      ? "Free roam is active. Start the game whenever everyone is ready."
+      : `Free roam while waiting for ${GAME.minPlayers - snapshot.players.length} more player.`
+    : enoughPlayers
+      ? "Free roam is active. Waiting for the game owner to start."
+      : "Free roam is active. Waiting for another player to join.";
+  startGameButton.classList.toggle("hidden", !isOwner);
+  startGameButton.disabled = !enoughPlayers;
+  startGameButton.textContent = enoughPlayers ? "START GAME" : "NEED 2 PLAYERS";
+}
+
+function requestRoundStart(): void {
+  const snapshot = latestSnapshot;
+  if (!snapshot || snapshot.round.phase !== "waiting" || snapshot.ownerId !== snapshot.selfId || snapshot.players.length < GAME.minPlayers) return;
+  connection?.send({ type: "startGame" });
+  startGameButton.disabled = true;
+  startGameButton.textContent = "STARTING…";
 }
 
 function selectPaintColor(color: string): void {

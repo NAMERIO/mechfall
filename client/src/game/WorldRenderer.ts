@@ -385,6 +385,7 @@ export class WorldRenderer {
     if (!this.characterTemplate) return this.createProceduralAvatar(state);
     const root = new THREE.Group();
     const visual = cloneSkeleton(this.characterTemplate);
+    visual.rotation.y = Math.PI;
     visual.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(visual);
     const size = bounds.getSize(new THREE.Vector3());
@@ -651,13 +652,15 @@ export class WorldRenderer {
         avatar.leftArm.rotation.x = -stride * 0.65;
         avatar.rightArm.rotation.x = stride * 0.65;
       } else if (!avatar.procedural) {
-        const running = avatar.state.role === "hunter";
+        const running = planarSpeed > GAME.hunterSpeed + 0.35;
         const clipName = avatar.state.pose !== "stand"
           ? POSE_CLIPS[avatar.state.pose]
           : moving
             ? running ? RUN_CLIP : WALK_CLIP
             : POSE_CLIPS.stand;
-        const expectedSpeed = running ? GAME.hunterSpeed : GAME.moveSpeed;
+        const expectedSpeed = running
+          ? avatar.state.role === "hunter" ? GAME.hunterSprintSpeed : GAME.sprintSpeed
+          : avatar.state.role === "hunter" ? GAME.hunterSpeed : GAME.moveSpeed;
         const timeScale = moving ? THREE.MathUtils.clamp(planarSpeed / expectedSpeed, 0.7, 1.35) : 1;
         this.setAvatarAnimation(avatar, clipName, avatar.state.pose === "stand" && moving, timeScale);
         avatar.mixer?.update(dt);

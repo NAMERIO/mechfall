@@ -134,7 +134,7 @@ export class GameRoom {
       tags: 0,
       bot,
       whistlingUntil: 0,
-      input: { sequence: 0, forward: 0, strafe: 0, jump: false, yaw: 0 },
+      input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, yaw: 0 },
       lastInputAt: Date.now(),
       lastTagAt: 0,
       lastWhistleAt: 0,
@@ -158,11 +158,11 @@ export class GameRoom {
       forward: clamp(input.forward, -1, 1),
       strafe: clamp(input.strafe, -1, 1),
       jump: Boolean(input.jump),
+      sprint: Boolean(input.sprint),
       yaw: normalizeAngle(input.yaw)
     };
     player.yaw = player.input.yaw;
     player.lastInputAt = Date.now();
-    if ((Math.abs(player.input.forward) > 0.05 || Math.abs(player.input.strafe) > 0.05) && player.pose !== "stand") player.pose = "stand";
   }
 
   private applyPaintStrokes(player: RoomPlayer, strokes: PaintStroke[]): void {
@@ -205,7 +205,12 @@ export class GameRoom {
       const cos = Math.cos(player.yaw);
       const wishX = -sin * forward + cos * strafe;
       const wishZ = -cos * forward - sin * strafe;
-      const speed = player.pose !== "stand" ? GAME.crouchSpeed : player.role === "hunter" ? GAME.hunterSpeed : GAME.moveSpeed;
+      const sprinting = player.input.sprint && (Math.abs(forward) > 0.05 || Math.abs(strafe) > 0.05);
+      const speed = player.pose !== "stand"
+        ? GAME.crouchSpeed
+        : sprinting
+          ? player.role === "hunter" ? GAME.hunterSprintSpeed : GAME.sprintSpeed
+          : player.role === "hunter" ? GAME.hunterSpeed : GAME.moveSpeed;
       moveBody(player, wishX, wishZ, speed, !frozen && player.input.jump, dt);
       player.input.jump = false;
     }

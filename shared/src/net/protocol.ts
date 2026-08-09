@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export const GAME = {
   tickRate: 30,
@@ -10,6 +10,8 @@ export const GAME = {
   resultsSeconds: 10,
   moveSpeed: 6.2,
   hunterSpeed: 6.65,
+  sprintSpeed: 8.4,
+  hunterSprintSpeed: 8.75,
   crouchSpeed: 3.2,
   jumpSpeed: 7.3,
   gravity: 20,
@@ -109,6 +111,7 @@ export interface InputPayload {
   forward: number;
   strafe: number;
   jump: boolean;
+  sprint: boolean;
   yaw: number;
 }
 

@@ -46,13 +46,14 @@ export class InputController {
   snapshot(): InputPayload {
     if (this.paintMode) {
       this.jumpQueued = false;
-      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, yaw: this.yaw };
+      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, yaw: this.yaw };
     }
     const forward = Number(this.keys.has("KeyW")) - Number(this.keys.has("KeyS"));
     const strafe = Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA"));
     const jump = this.jumpQueued;
+    const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     this.jumpQueued = false;
-    return { sequence: ++this.sequence, forward, strafe, jump, yaw: this.yaw };
+    return { sequence: ++this.sequence, forward, strafe, jump, sprint, yaw: this.yaw };
   }
 
   setPaintMode(active: boolean): void {

@@ -74,6 +74,7 @@ let brushSize = 0.07;
 let lastPaintPoint: { x: number; y: number } | undefined;
 let pendingPaintStrokes: PaintStroke[] = [];
 let paintFlushTimer = 0;
+let lastLocalShotAt = 0;
 let pointerX = window.innerWidth / 2;
 let pointerY = window.innerHeight / 2;
 
@@ -108,8 +109,16 @@ input.onAction = () => {
   const self = world.getSelf();
   if (!self?.alive) return;
   if (self.role === "hunter") {
-    connection?.send({ type: "tag" });
-    world.flashTag();
+    if (latestSnapshot?.round.phase !== "hunting") {
+      showToast("SHOTGUN LOCKED UNTIL THE HUNT STARTS");
+      return;
+    }
+    const now = performance.now();
+    if (now - lastLocalShotAt < GAME.shotgunCooldownMs) return;
+    lastLocalShotAt = now;
+    connection?.send({ type: "shoot", ...input.aim() });
+    world.flashShot();
+    playShotSound();
   } else if (self.role === "hider") {
     showToast("PRESS F TO OPEN CHROMA STUDIO");
   }
@@ -249,19 +258,22 @@ function updateHud(snapshot: ServerSnapshot): void {
   roleLabel.textContent = displayRole;
   roleIcon.textContent = self.role === "hunter" ? "⌖" : self.role === "hider" ? "◈" : "◎";
   roleTip.textContent = self.role === "hunter"
-    ? "Keep targets centered and click at close range"
+    ? "Keep targets centered and click to fire the shotgun"
     : self.role === "hider"
       ? "Press F and hand-paint your camouflage"
       : "You rejoin when the next round begins";
   paintPanel.classList.toggle("hidden", self.role !== "hider");
-  actionHint.textContent = self.role === "hunter" ? "CLICK TO TAG" : self.role === "hider" ? "PRESS F TO PAINT" : "SPECTATING";
+  actionHint.textContent = self.role === "hunter" ? "CLICK TO FIRE" : self.role === "hider" ? "PRESS F TO PAINT" : "SPECTATING";
   paintSwatch.style.backgroundColor = paintColor;
   paintHex.textContent = paintColor.toUpperCase();
   poseLabel.textContent = POSE_LABELS[self.pose];
   if (self.role !== "hider" && paintMode) setPaintMode(false);
   if (self.role !== "hider" && poseMenuOpen) setPoseMenu(false);
 
-  if (snapshot.event) showEvent(snapshot.event);
+  if (snapshot.event) {
+    if (snapshot.event.type === "shot") world.showShot(snapshot.event.hunterId, snapshot.event.origin, snapshot.event.end);
+    showEvent(snapshot.event);
+  }
   if (snapshot.round.phase !== previousPhase) {
     previousPhase = snapshot.round.phase;
     announcePhase(snapshot);
@@ -440,14 +452,41 @@ function whistle(): void {
 }
 
 function showEvent(event: GameEvent): void {
+  if (event.type === "shot" && !event.hider) return;
   const line = document.createElement("div");
-  if (event.type === "tag") line.innerHTML = `<strong>${escapeHtml(event.hunter)}</strong><span>exposed</span><b>${escapeHtml(event.hider)}</b>`;
+  if (event.type === "shot") line.innerHTML = `<strong>${escapeHtml(event.hunter)}</strong><span>shot</span><b>${escapeHtml(event.hider ?? "")}</b>`;
   if (event.type === "whistle") line.innerHTML = `<strong>${escapeHtml(event.player)}</strong><span>whistled</span>`;
   if (event.type === "join") line.innerHTML = `<strong>${escapeHtml(event.player)}</strong><span>dropped in</span>`;
   if (event.type === "leave") line.innerHTML = `<strong>${escapeHtml(event.player)}</strong><span>left the floor</span>`;
   eventFeed.prepend(line);
   while (eventFeed.children.length > 4) eventFeed.lastElementChild?.remove();
   window.setTimeout(() => line.remove(), 5_000);
+}
+
+function playShotSound(): void {
+  try {
+    const context = new AudioContext();
+    const duration = 0.13;
+    const buffer = context.createBuffer(1, Math.ceil(context.sampleRate * duration), context.sampleRate);
+    const samples = buffer.getChannelData(0);
+    for (let index = 0; index < samples.length; index += 1) {
+      const fade = 1 - index / samples.length;
+      samples[index] = (Math.random() * 2 - 1) * fade * fade;
+    }
+    const source = context.createBufferSource();
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    filter.type = "lowpass";
+    filter.frequency.value = 1_500;
+    gain.gain.setValueAtTime(0.16, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, context.currentTime + duration);
+    source.connect(filter).connect(gain).connect(context.destination);
+    source.start();
+    source.addEventListener("ended", () => void context.close());
+  } catch {
+    // Audio is a non-essential enhancement.
+  }
 }
 
 function showToast(message: string): void {

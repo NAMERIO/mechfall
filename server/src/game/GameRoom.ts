@@ -25,7 +25,7 @@ interface RoomPlayer extends PlayerState {
   socket?: WebSocket;
   input: InputPayload;
   lastInputAt: number;
-  lastTagAt: number;
+  lastShotAt: number;
   lastWhistleAt: number;
   lastPaintAt: number;
   paintStrokes: PaintStroke[];
@@ -107,7 +107,7 @@ export class GameRoom {
       this.broadcast({ type: "paintReset", playerId: player.id });
     }
     if (message.type === "pose" && player.role === "hider" && player.alive && isPose(message.pose)) player.pose = message.pose;
-    if (message.type === "tag") this.tryTag(player);
+    if (message.type === "shoot") this.tryShoot(player, message.yaw, message.pitch);
     if (message.type === "whistle") this.tryWhistle(player);
     if (message.type === "ping") this.send(player.socket, { type: "pong", sentAt: Number(message.sentAt) || 0, serverTime: Date.now() });
   }
@@ -136,7 +136,7 @@ export class GameRoom {
       whistlingUntil: 0,
       input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, yaw: 0 },
       lastInputAt: Date.now(),
-      lastTagAt: 0,
+      lastShotAt: 0,
       lastWhistleAt: 0,
       lastPaintAt: 0,
       paintStrokes: [],
@@ -260,34 +260,68 @@ export class GameRoom {
     this.broadcast({ type: "paintReset" });
   }
 
-  private tryTag(hunter: RoomPlayer): void {
+  private tryShoot(hunter: RoomPlayer, requestedYaw: number, requestedPitch: number): void {
     const now = Date.now();
-    if (this.round.phase !== "hunting" || hunter.role !== "hunter" || !hunter.alive || now - hunter.lastTagAt < GAME.tagCooldownMs) return;
-    hunter.lastTagAt = now;
+    if (
+      this.round.phase !== "hunting"
+      || hunter.role !== "hunter"
+      || !hunter.alive
+      || !Number.isFinite(requestedYaw)
+      || !Number.isFinite(requestedPitch)
+      || now - hunter.lastShotAt < GAME.shotgunCooldownMs
+    ) return;
+    hunter.lastShotAt = now;
+    hunter.yaw = normalizeAngle(requestedYaw);
+    hunter.input.yaw = hunter.yaw;
 
-    const forwardX = -Math.sin(hunter.yaw);
-    const forwardZ = -Math.cos(hunter.yaw);
+    // The camera's normal third-person pitch is -0.22. Treat that as a level
+    // muzzle and retain a small amount of vertical aiming for jumps/ledges.
+    const pitch = clamp(requestedPitch + 0.22, -0.12, 0.12);
+    const horizontal = Math.cos(pitch);
+    const direction = {
+      x: -Math.sin(hunter.yaw) * horizontal,
+      y: Math.sin(pitch),
+      z: -Math.cos(hunter.yaw) * horizontal
+    };
+    const origin = { x: hunter.position.x, y: hunter.position.y + 1.28, z: hunter.position.z };
+    const blockedAt = firstWorldHit(origin, direction, GAME.shotgunRange);
     let closest: RoomPlayer | undefined;
-    let closestDistance = GAME.tagRange * GAME.tagRange;
+    let closestDistance = blockedAt;
     for (const target of this.players.values()) {
       if (target.role !== "hider" || !target.alive) continue;
-      const distance = distanceSquared(hunter.position, target.position);
-      if (distance >= closestDistance) continue;
-      const dx = target.position.x - hunter.position.x;
-      const dz = target.position.z - hunter.position.z;
-      const horizontalLength = Math.hypot(dx, dz) || 1;
-      if ((dx / horizontalLength) * forwardX + (dz / horizontalLength) * forwardZ < 0.68) continue;
+      const dx = target.position.x - origin.x;
+      const dy = target.position.y + 1.05 - origin.y;
+      const dz = target.position.z - origin.z;
+      const along = dx * direction.x + dy * direction.y + dz * direction.z;
+      if (along <= 0 || along >= closestDistance) continue;
+      const perpendicularSquared = Math.max(0, dx * dx + dy * dy + dz * dz - along * along);
+      const spreadRadius = 0.68 + along * 0.035;
+      if (perpendicularSquared > spreadRadius * spreadRadius) continue;
       closest = target;
-      closestDistance = distance;
+      closestDistance = along;
     }
 
-    if (!closest) return;
-    closest.alive = false;
-    closest.role = "spectator";
-    closest.pose = "stand";
-    hunter.tags += 1;
-    hunter.score += 100;
-    this.pendingEvent = { type: "tag", hunter: hunter.name, hider: closest.name };
+    const endDistance = closest ? closestDistance : blockedAt;
+    const end = {
+      x: origin.x + direction.x * endDistance,
+      y: origin.y + direction.y * endDistance,
+      z: origin.z + direction.z * endDistance
+    };
+    if (closest) {
+      closest.alive = false;
+      closest.role = "spectator";
+      closest.pose = "stand";
+      hunter.tags += 1;
+      hunter.score += 100;
+    }
+    this.pendingEvent = {
+      type: "shot",
+      hunterId: hunter.id,
+      hunter: hunter.name,
+      origin,
+      end,
+      hider: closest?.name
+    };
   }
 
   private tryWhistle(player: RoomPlayer): void {
@@ -304,7 +338,7 @@ export class GameRoom {
       const target = this.nearest(bot, (player) => player.role === "hider" && player.alive);
       if (target) {
         this.steerBot(bot, target.position.x, target.position.z);
-        if (distanceSquared(bot.position, target.position) < GAME.tagRange * GAME.tagRange) this.tryTag(bot);
+        if (distanceSquared(bot.position, target.position) < GAME.shotgunRange * GAME.shotgunRange) this.tryShoot(bot, bot.yaw, -0.22);
       }
       return;
     }
@@ -370,7 +404,7 @@ export class GameRoom {
       sequence: this.sequence,
       selfId: player.id,
       roomId: this.id,
-      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastTagAt: _lastTagAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, botTarget: _botTarget, botThinkAt: _botThinkAt, ...state }) => state),
+      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, botTarget: _botTarget, botThinkAt: _botThinkAt, ...state }) => state),
       round: this.round,
       event: this.pendingEvent
     });
@@ -396,4 +430,33 @@ function isPose(value: unknown): value is Pose {
 
 function normalizeAngle(value: number): number {
   return Math.atan2(Math.sin(value), Math.cos(value));
+}
+
+function firstWorldHit(origin: { x: number; y: number; z: number }, direction: { x: number; y: number; z: number }, maxDistance: number): number {
+  let nearest = maxDistance;
+  for (const box of WORLD_BOXES) {
+    if (!box.solid) continue;
+    let enter = 0;
+    let exit = nearest;
+    for (let axis = 0; axis < 3; axis += 1) {
+      const originAxis = axis === 0 ? origin.x : axis === 1 ? origin.y : origin.z;
+      const directionAxis = axis === 0 ? direction.x : axis === 1 ? direction.y : direction.z;
+      const minimum = box.position[axis]! - box.size[axis]! / 2;
+      const maximum = box.position[axis]! + box.size[axis]! / 2;
+      if (Math.abs(directionAxis) < 1e-7) {
+        if (originAxis < minimum || originAxis > maximum) {
+          enter = Number.POSITIVE_INFINITY;
+          break;
+        }
+        continue;
+      }
+      const first = (minimum - originAxis) / directionAxis;
+      const second = (maximum - originAxis) / directionAxis;
+      enter = Math.max(enter, Math.min(first, second));
+      exit = Math.min(exit, Math.max(first, second));
+      if (enter > exit) break;
+    }
+    if (enter >= 0 && enter <= exit) nearest = Math.min(nearest, enter);
+  }
+  return nearest;
 }

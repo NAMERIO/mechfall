@@ -9,3 +9,14 @@
 - Project changes: FBX-to-GLB conversion, normalized runtime scale, canvas-based paint material, animation mapping, and networked pose selection.
 
 This is a licensed project asset, not an open-source standalone model. Do not redistribute the FBX or GLB separately from the game project.
+
+## Licensed shotgun asset
+
+`meccha-chameleon-shotgun.glb` is **Meccha Chameleon Shut Gun** by **samkar_09**.
+
+- Source: <https://sketchfab.com/3d-models/meccha-chameleon-shut-gun-b9a2eb8370424f88aacef378b14fe6d8>
+- License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- Original download: `client/assets/source/meccha-chameleon-shotgun/source-download.zip`
+- Extracted source: `client/assets/source/meccha-chameleon-shotgun/original/`
+- Runtime file: `client/public/models/meccha-chameleon-shotgun.glb`
+- Project changes: normalized runtime scale, seeker carry orientation, muzzle attachment point, shadows, recoil, and networked firing effects.

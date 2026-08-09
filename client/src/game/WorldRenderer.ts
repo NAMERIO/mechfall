@@ -44,6 +44,10 @@ interface Avatar {
   activeAction?: THREE.AnimationAction;
   activeAnimation?: string;
   hunterMark: THREE.Group;
+  weapon: THREE.Group;
+  muzzle: THREE.Object3D;
+  weaponBasePosition: THREE.Vector3;
+  recoilUntil: number;
   whistleRing: THREE.Mesh;
   state: PlayerState;
 }
@@ -66,6 +70,7 @@ export class WorldRenderer {
   private paintOrbitPitch = 0;
   private characterTemplate?: THREE.Group;
   private characterAnimations: THREE.AnimationClip[] = [];
+  private shotgunTemplate?: THREE.Group;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
@@ -83,6 +88,7 @@ export class WorldRenderer {
     this.buildLighting();
     this.buildWorld();
     void this.loadCharacterModel();
+    void this.loadShotgunModel();
     this.resize();
     window.addEventListener("resize", () => this.resize());
     this.animate();
@@ -136,6 +142,7 @@ export class WorldRenderer {
       for (const surface of avatar.paintSurfaces.values()) surface.material.roughness = COMPACT_POSES.has(player.pose) ? 0.48 : 0.7;
       avatar.root.visible = player.alive;
       avatar.hunterMark.visible = player.role === "hunter";
+      avatar.weapon.visible = player.role === "hunter" && player.alive;
       this.setPose(avatar, player.pose);
     }
   }
@@ -218,13 +225,30 @@ export class WorldRenderer {
     }
   }
 
-  flashTag(): void {
-    const light = new THREE.PointLight("#ff594f", 12, 9);
+  flashShot(): void {
     const self = this.avatars.get(this.selfId);
     if (!self) return;
-    light.position.copy(self.root.position).add(new THREE.Vector3(0, 1.4, 0));
-    this.scene.add(light);
-    window.setTimeout(() => this.scene.remove(light), 90);
+    this.showMuzzleFlash(self);
+  }
+
+  showShot(hunterId: string, origin: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }): void {
+    const hunter = this.avatars.get(hunterId);
+    const start = hunter
+      ? hunter.muzzle.getWorldPosition(new THREE.Vector3())
+      : new THREE.Vector3(origin.x, origin.y, origin.z);
+    const finish = new THREE.Vector3(end.x, end.y, end.z);
+    const tracer = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([start, finish]),
+      new THREE.LineBasicMaterial({ color: "#ffd36a", transparent: true, opacity: 0.92 })
+    );
+    tracer.renderOrder = 20;
+    this.scene.add(tracer);
+    if (hunter) this.showMuzzleFlash(hunter);
+    window.setTimeout(() => {
+      this.scene.remove(tracer);
+      tracer.geometry.dispose();
+      (tracer.material as THREE.Material).dispose();
+    }, 105);
   }
 
   destroy(): void {
@@ -355,7 +379,7 @@ export class WorldRenderer {
     try {
       const gltf = await new GLTFLoader().loadAsync("/models/chameleon-man-pro.glb");
       this.characterTemplate = gltf.scene;
-      this.characterAnimations = gltf.animations;
+      this.characterAnimations = [...gltf.animations, ...createHunterCarryClips(gltf.animations)];
 
       for (const [id, oldAvatar] of [...this.avatars]) {
         if (!oldAvatar.procedural) continue;
@@ -375,6 +399,31 @@ export class WorldRenderer {
     } catch (error) {
       console.warn("Chameleon Man Pro failed to load; using the procedural fallback.", error);
     }
+  }
+
+  private async loadShotgunModel(): Promise<void> {
+    try {
+      const gltf = await new GLTFLoader().loadAsync("/models/meccha-chameleon-shotgun.glb");
+      this.shotgunTemplate = gltf.scene;
+      for (const avatar of this.avatars.values()) this.replaceShotgun(avatar);
+    } catch (error) {
+      console.warn("Meccha Chameleon shotgun failed to load; using the procedural fallback.", error);
+    }
+  }
+
+  private replaceShotgun(avatar: Avatar): void {
+    if (!this.shotgunTemplate) return;
+    const previous = avatar.weapon;
+    const { weapon, muzzle } = createShotgun(this.shotgunTemplate);
+    weapon.position.copy(previous.position);
+    weapon.rotation.copy(previous.rotation);
+    weapon.visible = previous.visible;
+    avatar.root.remove(previous);
+    avatar.root.add(weapon);
+    avatar.weapon = weapon;
+    avatar.muzzle = muzzle;
+    avatar.weaponBasePosition.copy(weapon.position);
+    disposeObject(previous);
   }
 
   private createAvatar(state: PlayerState): Avatar {
@@ -425,6 +474,12 @@ export class WorldRenderer {
     hunterMark.add(ring);
     root.add(hunterMark);
 
+    const { weapon, muzzle } = createShotgun(this.shotgunTemplate);
+    weapon.position.set(0.29, 1.3, -0.38);
+    weapon.rotation.set(-1.16, 0.08, -0.12);
+    weapon.visible = state.role === "hunter" && state.alive;
+    root.add(weapon);
+
     const whistleRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.75, 0.035, 6, 30),
       new THREE.MeshBasicMaterial({ color: "#fff2a8", transparent: true, opacity: 0.85 })
@@ -450,6 +505,10 @@ export class WorldRenderer {
       mixer,
       actions,
       hunterMark,
+      weapon,
+      muzzle,
+      weaponBasePosition: weapon.position.clone(),
+      recoilUntil: 0,
       whistleRing,
       state
     };
@@ -507,6 +566,12 @@ export class WorldRenderer {
     hunterMark.add(ring, antenna);
     root.add(hunterMark);
 
+    const { weapon, muzzle } = createShotgun(this.shotgunTemplate);
+    weapon.position.set(0.29, 1.3, -0.38);
+    weapon.rotation.set(-1.16, 0.08, -0.12);
+    weapon.visible = state.role === "hunter" && state.alive;
+    root.add(weapon);
+
     const whistleRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.75, 0.035, 6, 30),
       new THREE.MeshBasicMaterial({ color: "#fff2a8", transparent: true, opacity: 0.85 })
@@ -539,6 +604,10 @@ export class WorldRenderer {
       leftLeg,
       rightLeg,
       hunterMark,
+      weapon,
+      muzzle,
+      weaponBasePosition: weapon.position.clone(),
+      recoilUntil: 0,
       whistleRing,
       state
     };
@@ -578,6 +647,24 @@ export class WorldRenderer {
       surface.context.fill();
     }
     surface.texture.needsUpdate = true;
+  }
+
+  private showMuzzleFlash(avatar: Avatar): void {
+    avatar.recoilUntil = performance.now() + 140;
+    const position = avatar.muzzle.getWorldPosition(new THREE.Vector3());
+    const flash = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 8, 6),
+      new THREE.MeshBasicMaterial({ color: "#fff0a4", transparent: true, opacity: 0.95 })
+    );
+    flash.position.copy(position);
+    const light = new THREE.PointLight("#ff9d45", 18, 8, 2);
+    light.position.copy(position);
+    this.scene.add(flash, light);
+    window.setTimeout(() => {
+      this.scene.remove(flash, light);
+      flash.geometry.dispose();
+      (flash.material as THREE.Material).dispose();
+    }, 72);
   }
 
   private setAvatarAnimation(avatar: Avatar, name: string, looping: boolean, timeScale = 1): void {
@@ -649,15 +736,24 @@ export class WorldRenderer {
       if (avatar.procedural && avatar.state.pose === "stand" && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
         avatar.leftLeg.rotation.x = stride;
         avatar.rightLeg.rotation.x = -stride;
-        avatar.leftArm.rotation.x = -stride * 0.65;
-        avatar.rightArm.rotation.x = stride * 0.65;
+        if (avatar.state.role === "hunter") {
+          avatar.leftArm.rotation.set(-0.58, 0, -0.32);
+          avatar.rightArm.rotation.set(-0.4, 0, 0.78);
+        } else {
+          avatar.leftArm.rotation.set(-stride * 0.65, 0, 0);
+          avatar.rightArm.rotation.set(stride * 0.65, 0, 0);
+        }
       } else if (!avatar.procedural) {
         const running = planarSpeed > GAME.hunterSpeed + 0.35;
-        const clipName = avatar.state.pose !== "stand"
-          ? POSE_CLIPS[avatar.state.pose]
-          : moving
-            ? running ? RUN_CLIP : WALK_CLIP
-            : POSE_CLIPS.stand;
+        const clipName = avatar.state.role === "hunter"
+          ? moving
+            ? running ? HUNTER_RUN_CLIP : HUNTER_WALK_CLIP
+            : HUNTER_IDLE_CLIP
+          : avatar.state.pose !== "stand"
+            ? POSE_CLIPS[avatar.state.pose]
+            : moving
+              ? running ? RUN_CLIP : WALK_CLIP
+              : POSE_CLIPS.stand;
         const expectedSpeed = running
           ? avatar.state.role === "hunter" ? GAME.hunterSprintSpeed : GAME.sprintSpeed
           : avatar.state.role === "hunter" ? GAME.hunterSpeed : GAME.moveSpeed;
@@ -666,6 +762,9 @@ export class WorldRenderer {
         avatar.mixer?.update(dt);
       }
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
+      const recoilRemaining = Math.max(0, avatar.recoilUntil - renderTime);
+      avatar.weapon.position.copy(avatar.weaponBasePosition);
+      if (recoilRemaining > 0) avatar.weapon.position.z += Math.sin((recoilRemaining / 140) * Math.PI) * 0.13;
       if (avatar.whistleRing.visible) {
         const pulse = 1 + ((elapsed * 1.8) % 1) * 2.4;
         avatar.whistleRing.scale.setScalar(pulse);
@@ -701,6 +800,124 @@ export class WorldRenderer {
   }
 }
 
+function createHunterCarryClips(clips: THREE.AnimationClip[]): THREE.AnimationClip[] {
+  const pose = clips.find((clip) => clip.name === HUNTER_IDLE_CLIP);
+  if (!pose) return [];
+  const poseTracks = pose.tracks.filter(isHunterUpperBodyTrack);
+  const merged: THREE.AnimationClip[] = [];
+  for (const [baseName, carryName] of [[WALK_CLIP, HUNTER_WALK_CLIP], [RUN_CLIP, HUNTER_RUN_CLIP]] as const) {
+    const base = clips.find((clip) => clip.name === baseName);
+    if (!base) continue;
+    const tracks = [
+      ...base.tracks.filter((track) => !isHunterUpperBodyTrack(track)).map((track) => track.clone()),
+      ...poseTracks.map((track) => track.clone())
+    ];
+    merged.push(new THREE.AnimationClip(carryName, base.duration, tracks));
+  }
+  return merged;
+}
+
+function isHunterUpperBodyTrack(track: THREE.KeyframeTrack): boolean {
+  const separator = track.name.lastIndexOf(".");
+  const target = (separator >= 0 ? track.name.slice(0, separator) : track.name).replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return HUNTER_POSE_BONES.some((bone) => target.endsWith(bone.replace(/[^a-z0-9]/gi, "").toLowerCase()));
+}
+
+function createShotgun(template?: THREE.Group): { weapon: THREE.Group; muzzle: THREE.Object3D } {
+  const weapon = new THREE.Group();
+  weapon.name = "MecchaShotgun";
+  if (template) {
+    const visual = template.clone(true);
+    visual.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(visual);
+    const size = bounds.getSize(new THREE.Vector3());
+    const scale = 1.34 / Math.max(size.z, 0.001);
+    visual.scale.setScalar(scale);
+    // The source model's barrel points toward +Z; the character and muzzle
+    // effects use -Z as forward.
+    visual.rotation.y = Math.PI;
+    visual.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.castShadow = true;
+      child.receiveShadow = true;
+    });
+    weapon.add(visual);
+
+    const muzzle = new THREE.Object3D();
+    muzzle.name = "ShotgunMuzzle";
+    muzzle.position.set(0, 0.045 * scale, -bounds.max.z * scale);
+    weapon.add(muzzle);
+    return { weapon, muzzle };
+  }
+
+  const black = new THREE.MeshStandardMaterial({ color: "#11171b", roughness: 0.38, metalness: 0.62 });
+  const dark = new THREE.MeshStandardMaterial({ color: "#252d31", roughness: 0.72, metalness: 0.18 });
+  const steel = new THREE.MeshStandardMaterial({ color: "#536169", roughness: 0.28, metalness: 0.82 });
+
+  const addBox = (size: [number, number, number], position: [number, number, number], material: THREE.Material, rotationZ = 0): THREE.Mesh => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+    mesh.position.set(...position);
+    mesh.rotation.z = rotationZ;
+    mesh.castShadow = true;
+    weapon.add(mesh);
+    return mesh;
+  };
+  const addTube = (radius: number, length: number, position: [number, number, number], material: THREE.Material): THREE.Mesh => {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 12), material);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(...position);
+    mesh.castShadow = true;
+    weapon.add(mesh);
+    return mesh;
+  };
+
+  addBox([0.32, 0.28, 0.48], [0, 0, -0.18], black);
+  addBox([0.25, 0.2, 0.38], [0, 0.01, 0.24], dark);
+  addBox([0.18, 0.38, 0.16], [0, -0.2, 0.21], dark, -0.25);
+  addBox([0.09, 0.05, 0.4], [0, 0.17, -0.2], steel);
+  addTube(0.055, 0.78, [0, 0.075, -0.78], steel);
+  addTube(0.07, 0.68, [0, -0.085, -0.7], black);
+  addBox([0.37, 0.29, 0.35], [0, -0.015, -0.56], dark);
+
+  // Ribbed pump and twin muzzle rings give the same chunky silhouette as the
+  // licensed visual reference without redistributing its mesh.
+  for (let index = 0; index < 5; index += 1) {
+    addBox([0.39, 0.305, 0.025], [0, -0.015, -0.42 - index * 0.07], black);
+  }
+  for (const y of [0.075, -0.085]) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(y > 0 ? 0.066 : 0.082, 0.014, 6, 16), black);
+    ring.position.set(0, y, -1.17);
+    ring.castShadow = true;
+    weapon.add(ring);
+  }
+
+  const stripeColors = ["#35d6c7", "#8d68cf", "#f05b72", "#f2ad3d", "#a9cf4f"];
+  stripeColors.forEach((color, index) => {
+    const stripe = addBox(
+      [0.342, 0.292, 0.034],
+      [0, 0, -0.02 + index * 0.042],
+      new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.05 })
+    );
+    stripe.renderOrder = 2;
+  });
+
+  const muzzle = new THREE.Object3D();
+  muzzle.name = "ShotgunMuzzle";
+  muzzle.position.set(0, 0.075, -1.2);
+  weapon.add(muzzle);
+  weapon.scale.setScalar(0.82);
+  return { weapon, muzzle };
+}
+
+function disposeObject(object: THREE.Object3D): void {
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.geometry.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) material.dispose();
+  });
+}
+
 function shortestAngle(from: number, to: number): number {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
@@ -708,6 +925,10 @@ function shortestAngle(from: number, to: number): number {
 const CHARACTER_HEIGHT = 2.45;
 const WALK_CLIP = "ChameleonMan|Walking";
 const RUN_CLIP = "ChameleonMan|Running";
+const HUNTER_IDLE_CLIP = "ChameleonMan|Pose_HandOnHip";
+const HUNTER_WALK_CLIP = "ChameleonMan|WalkingWithShotgun";
+const HUNTER_RUN_CLIP = "ChameleonMan|RunningWithShotgun";
+const HUNTER_POSE_BONES = ["Bone.001", "shoulder.R", "upper_arm.R", "lower_arm.R", "hand.R", "shoulder.L", "upper_arm.L", "lower_arm.L", "hand.L"] as const;
 
 const POSE_CLIPS: Record<Pose, string> = {
   stand: "ChameleonMan|Pose_Straight",

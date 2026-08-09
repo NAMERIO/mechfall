@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export const GAME = {
   tickRate: 30,
@@ -16,8 +16,8 @@ export const GAME = {
   jumpSpeed: 7.3,
   gravity: 20,
   playerRadius: 0.48,
-  tagRange: 4.1,
-  tagCooldownMs: 650,
+  shotgunRange: 28,
+  shotgunCooldownMs: 850,
   whistleCooldownMs: 12_000,
   inputTimeoutMs: 1_000
 } as const;
@@ -101,7 +101,7 @@ export interface ServerSnapshot {
 }
 
 export type GameEvent =
-  | { type: "tag"; hunter: string; hider: string }
+  | { type: "shot"; hunterId: string; hunter: string; origin: Vec3; end: Vec3; hider?: string }
   | { type: "whistle"; player: string }
   | { type: "join"; player: string }
   | { type: "leave"; player: string };
@@ -122,7 +122,7 @@ export type ClientMessage =
   | { type: "paintStrokes"; strokes: PaintStroke[] }
   | { type: "clearPaint" }
   | { type: "pose"; pose: Pose }
-  | { type: "tag" }
+  | { type: "shoot"; yaw: number; pitch: number }
   | { type: "whistle" }
   | { type: "ping"; sentAt: number };
 

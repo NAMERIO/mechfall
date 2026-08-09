@@ -56,6 +56,10 @@ export class InputController {
     return { sequence: ++this.sequence, forward, strafe, jump, sprint, yaw: this.yaw };
   }
 
+  aim(): { yaw: number; pitch: number } {
+    return { yaw: this.yaw, pitch: this.pitch };
+  }
+
   setPaintMode(active: boolean): void {
     this.paintMode = active;
     this.keys.clear();

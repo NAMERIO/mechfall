@@ -17,7 +17,8 @@ const hud = element<HTMLDivElement>("#hud");
 const playButton = element<HTMLButtonElement>("#play-button");
 const serverLabel = element<HTMLElement>("#server-label");
 const nameInput = element<HTMLInputElement>("#name-input");
-const roomCode = element<HTMLElement>("#room-code");
+const gameIdInput = element<HTMLInputElement>("#game-id-input");
+const gameCode = element<HTMLElement>("#game-code");
 const phaseLabel = element<HTMLElement>("#phase-label");
 const timer = element<HTMLElement>("#timer");
 const timerFill = element<HTMLElement>("#timer-fill");
@@ -79,12 +80,20 @@ let pointerX = window.innerWidth / 2;
 let pointerY = window.innerHeight / 2;
 
 nameInput.value = localStorage.getItem("mechfall-name") ?? `Drifter ${Math.floor(Math.random() * 90 + 10)}`;
+gameIdInput.value = new URLSearchParams(window.location.search).get("gameId")?.toUpperCase().slice(0, 6) ?? "";
 setBrushSize(brushSize);
 
 void updateServerStatus();
 window.setInterval(() => void updateServerStatus(), 15_000);
 
 playButton.addEventListener("click", () => void startGame());
+gameIdInput.addEventListener("input", () => {
+  gameIdInput.value = gameIdInput.value.replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 6);
+});
+gameIdInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") void startGame();
+});
+gameCode.closest(".room-chip")?.addEventListener("click", () => void copyGameId());
 colorInput.addEventListener("input", () => selectPaintColor(colorInput.value));
 paintButton.addEventListener("click", togglePaintMode);
 poseButton.addEventListener("click", togglePoseMenu);
@@ -178,17 +187,22 @@ async function updateServerStatus(): Promise<void> {
 async function startGame(): Promise<void> {
   playButton.disabled = true;
   const name = nameInput.value.trim() || "Drifter";
+  const requestedGameId = gameIdInput.value.trim().toUpperCase();
   localStorage.setItem("mechfall-name", name);
   menu.classList.add("hidden");
   loading.classList.remove("hidden");
-  loadingStatus.textContent = "Finding the nearest open room…";
+  loadingStatus.textContent = requestedGameId ? `Joining game ${requestedGameId}…` : "Finding the nearest open game…";
 
   connection?.close();
   connection = new GameConnection(handleMessage);
   try {
-    const match = await connection.connect(name);
-    roomCode.textContent = match.roomId;
-    loadingStatus.textContent = `Room ${match.roomId} found. Syncing world…`;
+    const match = await connection.connect(name, requestedGameId);
+    gameCode.textContent = match.gameId;
+    gameIdInput.value = match.gameId;
+    const url = new URL(window.location.href);
+    url.searchParams.set("gameId", match.gameId);
+    window.history.replaceState({}, "", url);
+    loadingStatus.textContent = `Game ${match.gameId} found. Syncing world…`;
   } catch (error) {
     loading.classList.add("hidden");
     menu.classList.remove("hidden");
@@ -199,7 +213,7 @@ async function startGame(): Promise<void> {
 
 function handleMessage(message: ServerMessage): void {
   if (message.type === "welcome") {
-    roomCode.textContent = message.roomId;
+    gameCode.textContent = message.gameId;
     return;
   }
   if (message.type === "error") {
@@ -251,7 +265,7 @@ function updateHud(snapshot: ServerSnapshot): void {
   const hiders = snapshot.players.filter((player) => player.role === "hider" && player.alive).length;
   aliveCount.textContent = `${hiders} HIDER${hiders === 1 ? "" : "S"}`;
   pingLabel.textContent = `${connection?.latency ?? 0} MS`;
-  roomCode.textContent = snapshot.roomId;
+  gameCode.textContent = snapshot.gameId;
   score.textContent = String(self.score).padStart(4, "0");
 
   const displayRole = self.role === "spectator" ? "SPECTATING" : self.role.toUpperCase();
@@ -307,7 +321,7 @@ function announcePhase(snapshot: ServerSnapshot): void {
   }
 
   const phaseMessages = {
-    waiting: ["ROOM WARMUP", "STAND BY", "New drifters can still join this round."],
+    waiting: ["GAME WARMUP", "STAND BY", "New drifters can still join this game."],
     hiding: [`ROUND ${snapshot.round.round}`, "PAINT & HIDE", "Sample a wall. Change your shape. Become scenery."],
     hunting: [`ROUND ${snapshot.round.round}`, "THE HUNT IS ON", "Move carefully. Look twice. Trust no object."]
   } as const;
@@ -494,6 +508,17 @@ function showToast(message: string): void {
   toast.textContent = message;
   toast.classList.add("visible");
   toastTimeout = window.setTimeout(() => toast.classList.remove("visible"), 1_500);
+}
+
+async function copyGameId(): Promise<void> {
+  const gameId = gameCode.textContent?.trim() ?? "";
+  if (!/^[A-Z0-9]{6}$/.test(gameId)) return;
+  try {
+    await navigator.clipboard.writeText(gameId);
+    showToast(`GAME ID ${gameId} COPIED`);
+  } catch {
+    showToast(`GAME ID · ${gameId}`);
+  }
 }
 
 function playTone(frequency: number, duration: number): void {

@@ -7,6 +7,7 @@ import {
   SPAWN_POINTS,
   WORLD_BOXES,
   clamp,
+  encodeServerMessage,
   isHexColor,
   isPaintPart,
   type ClientMessage,
@@ -71,7 +72,7 @@ export class GameRoom {
     this.players.set(id, player);
     this.lastHumanAt = Date.now();
     this.pendingEvent = { type: "join", player: player.name };
-    this.send(socket, { type: "welcome", id, roomId: this.id, protocol: PROTOCOL_VERSION });
+    this.send(socket, { type: "welcome", id, gameId: this.id, protocol: PROTOCOL_VERSION });
     this.sendSnapshot(player);
     this.send(socket, {
       type: "paintState",
@@ -88,16 +89,9 @@ export class GameRoom {
     this.pendingEvent = { type: "leave", player: player.name };
   }
 
-  handleMessage(playerId: string, raw: string): void {
+  handleMessage(playerId: string, message: ClientMessage): void {
     const player = this.players.get(playerId);
-    if (!player || raw.length > 16_384) return;
-
-    let message: ClientMessage;
-    try {
-      message = JSON.parse(raw) as ClientMessage;
-    } catch {
-      return;
-    }
+    if (!player) return;
 
     if (message.type === "input") this.applyInput(player, message.input);
     if (message.type === "paintStroke") this.applyPaintStrokes(player, [message.stroke]);
@@ -403,7 +397,7 @@ export class GameRoom {
       serverTime: Date.now(),
       sequence: this.sequence,
       selfId: player.id,
-      roomId: this.id,
+      gameId: this.id,
       players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, botTarget: _botTarget, botThinkAt: _botThinkAt, ...state }) => state),
       round: this.round,
       event: this.pendingEvent
@@ -411,7 +405,7 @@ export class GameRoom {
   }
 
   private send(socket: WebSocket | undefined, message: ServerMessage): void {
-    if (socket?.readyState === 1) socket.send(JSON.stringify(message));
+    if (socket?.readyState === 1) socket.send(encodeServerMessage(message), { binary: true });
   }
 
   private broadcast(message: ServerMessage): void {

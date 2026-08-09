@@ -60,7 +60,7 @@ h1 { margin: 8px 0 0; font: 700 clamp(66px, 10vw, 136px)/.8 "Chakra Petch", sans
 h1 span { color: var(--acid); }
 .tagline { margin: 17px 0 0 7px; font-size: clamp(15px, 2vw, 20px); color: #cad2cd; letter-spacing: .03em; }
 
-.play-card { position: relative; min-height: 355px; overflow: hidden; padding: 34px; border-left: 3px solid var(--acid); }
+.play-card { position: relative; min-height: 405px; overflow: hidden; padding: 34px; border-left: 3px solid var(--acid); }
 .mode-copy { position: relative; width: 64%; z-index: 2; }
 .mode-copy h2 { margin: 8px 0 10px; font: 700 clamp(29px, 4vw, 46px)/1 "Chakra Petch", sans-serif; letter-spacing: -.035em; }
 .mode-copy p { max-width: 440px; margin: 0; color: #aebbb8; font-size: 14px; line-height: 1.6; }
@@ -75,9 +75,13 @@ h1 span { color: var(--acid); }
 .finder-ring::after { height: 18px; width: 2px; left: 91px; top: -9px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.name-field { position: absolute; z-index: 3; left: 34px; bottom: 103px; display: flex; align-items: center; width: calc(100% - 68px); height: 45px; border-bottom: 1px solid var(--line); }
-.name-field span { font: 600 10px "Chakra Petch"; letter-spacing: .17em; color: #839390; }
-.name-field input { flex: 1; min-width: 0; padding: 0 14px; color: var(--paper); background: transparent; border: 0; outline: none; text-align: right; font-weight: 600; }
+.name-field, .game-id-field { position: absolute; z-index: 3; left: 34px; display: flex; align-items: center; width: calc(100% - 68px); height: 45px; border-bottom: 1px solid var(--line); }
+.name-field { bottom: 148px; }
+.game-id-field { bottom: 103px; }
+.name-field span, .game-id-field span { font: 600 10px "Chakra Petch"; letter-spacing: .17em; color: #839390; }
+.name-field input, .game-id-field input { flex: 1; min-width: 0; padding: 0 14px; color: var(--paper); background: transparent; border: 0; outline: none; text-align: right; font-weight: 600; }
+.game-id-field input { text-transform: uppercase; letter-spacing: .16em; }
+.game-id-field input::placeholder { color: #65736f; letter-spacing: .08em; }
 .play-button { position: absolute; z-index: 3; left: 34px; bottom: 35px; display: flex; align-items: center; justify-content: space-between; width: calc(100% - 68px); height: 54px; padding: 0 20px; border: 0; background: var(--acid); color: var(--ink); cursor: pointer; transition: transform .15s, filter .15s; }
 .play-button:hover { transform: translateY(-2px); filter: brightness(1.08); }
 .play-button:disabled { filter: saturate(.1); cursor: wait; }
@@ -106,6 +110,7 @@ kbd { min-width: 44px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2);
 .room-chip, .population { display: flex; flex-direction: column; justify-content: center; padding: 10px 15px; background: rgba(17,27,32,.86); border: 1px solid var(--line); }
 .room-chip span, .population span { color: #8fa19e; font: 500 8px "Chakra Petch"; letter-spacing: .18em; }
 .room-chip strong, .population strong { margin-top: 3px; font: 600 12px "Chakra Petch"; letter-spacing: .1em; }
+.room-chip { cursor: copy; }
 .population { text-align: right; }
 .population strong { color: var(--teal); font-size: 9px; }
 .round-clock { position: relative; display: flex; align-items: baseline; justify-content: center; gap: 14px; padding: 10px; background: var(--paper); color: var(--ink); clip-path: polygon(6% 0, 94% 0, 100% 100%, 0 100%); }
@@ -209,7 +214,7 @@ kbd { min-width: 44px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2);
   .how-to { display: none; }
   .brand-block { grid-column: 1; }
   .menu-footer { grid-column: 1; }
-  .play-card { min-height: 370px; }
+  .play-card { min-height: 420px; }
   .mode-copy { width: 72%; }
   .mode-visual { opacity: .55; }
   .hud-top { top: 10px; grid-template-columns: 80px 190px 80px; }

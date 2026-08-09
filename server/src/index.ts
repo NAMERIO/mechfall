@@ -4,7 +4,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { WebSocketServer } from "ws";
-import { PROTOCOL_VERSION, type MatchmakeResponse } from "@mechfall/shared";
+import {
+  PROTOCOL_VERSION,
+  decodeClientMessage,
+  type FindGameResponse,
+  type GameWsDisconnectReason
+} from "@mechfall/shared";
 import { RoomManager } from "./matchmaking/RoomManager.js";
 
 const port = Number(process.env.PORT ?? 3001);
@@ -21,21 +26,36 @@ app.get("/health", (_request, response) => response.json({ ok: true }));
 app.get("/api/status", (_request, response) => response.json({
   status: "online",
   players: rooms.playerCount,
-  rooms: rooms.roomCount,
+  games: rooms.roomCount,
   protocol: PROTOCOL_VERSION
 }));
 
-app.post("/api/matchmake", (request, response) => {
-  const { roomId, ticket } = rooms.matchmake();
+app.post(["/api/find_game", "/api/matchmake"], (request, response) => {
+  if (Number(request.body?.protocol) !== PROTOCOL_VERSION) {
+    const payload: FindGameResponse = { type: "error", error: "invalid_protocol" };
+    response.json(payload);
+    return;
+  }
+  const result = rooms.findGame(typeof request.body?.gameId === "string" ? request.body.gameId : undefined);
+  if ("error" in result) {
+    const payload: FindGameResponse = { type: "error", error: result.error };
+    response.json(payload);
+    return;
+  }
   const forwardedProtocol = request.header("x-forwarded-proto")?.split(",")[0]?.trim();
   const secure = forwardedProtocol ? forwardedProtocol === "https" : request.secure;
   const protocol = secure ? "wss" : "ws";
   const hostHeader = request.header("host") ?? `localhost:${port}`;
-  const payload: MatchmakeResponse = {
-    roomId,
-    ticket,
-    wsUrl: `${protocol}://${hostHeader}/play?room=${encodeURIComponent(roomId)}`,
-    protocol: PROTOCOL_VERSION
+  const playUrl = new URL(`${protocol}://${hostHeader}/play`);
+  playUrl.searchParams.set("gameId", result.gameId);
+  const payload: FindGameResponse = {
+    type: "success",
+    res: {
+      gameId: result.gameId,
+      ticket: result.ticket,
+      urls: [playUrl.toString()],
+      protocol: PROTOCOL_VERSION
+    }
   };
   response.json(payload);
 });
@@ -53,35 +73,77 @@ server.on("upgrade", (request, socket, head) => {
     socket.destroy();
     return;
   }
-  const roomId = url.searchParams.get("room") ?? "";
+  const gameId = url.searchParams.get("gameId")?.toUpperCase() ?? "";
+  if (!rooms.hasGame(gameId)) {
+    socket.destroy();
+    return;
+  }
   sockets.handleUpgrade(request, socket, head, (webSocket) => {
-    sockets.emit("connection", webSocket, roomId);
+    sockets.emit("connection", webSocket, gameId);
   });
 });
 
-sockets.on("connection", (socket, roomId: string) => {
+sockets.on("connection", (socket, gameId: string) => {
   let playerId: string | undefined;
   let connectedRoom: ReturnType<RoomManager["consumeTicket"]>;
-  const helloTimeout = setTimeout(() => socket.close(4001, "Hello timeout"), 5_000);
+  let rateWindowStartedAt = Date.now();
+  let messagesInWindow = 0;
+  const disconnect = (reason: GameWsDisconnectReason): void => socket.close(4000, reason);
+  const helloTimeout = setTimeout(() => disconnect("invalid_ticket"), 5_000);
 
   socket.on("message", (data, isBinary) => {
-    if (isBinary) return;
-    const raw = data.toString();
-    if (!playerId) {
-      try {
-        const hello = JSON.parse(raw) as { type?: string; protocol?: number; ticket?: string; name?: string };
-        if (hello.type !== "hello" || hello.protocol !== PROTOCOL_VERSION || typeof hello.ticket !== "string") throw new Error("Bad hello");
-        connectedRoom = rooms.consumeTicket(hello.ticket, roomId);
-        if (!connectedRoom) throw new Error("Expired matchmaking ticket");
-        const player = connectedRoom.addHuman(socket, String(hello.name ?? ""));
-        playerId = player.id;
-        clearTimeout(helloTimeout);
-      } catch {
-        socket.close(4002, "Invalid or expired ticket");
-      }
+    if (!isBinary) {
+      disconnect("invalid_packet");
       return;
     }
-    connectedRoom?.handleMessage(playerId, raw);
+    const now = Date.now();
+    if (now - rateWindowStartedAt >= 1_000) {
+      rateWindowStartedAt = now;
+      messagesInWindow = 0;
+    }
+    messagesInWindow += 1;
+    if (messagesInWindow > 180) {
+      disconnect("rate_limited");
+      return;
+    }
+    const packet = Array.isArray(data)
+      ? Buffer.concat(data)
+      : data instanceof ArrayBuffer
+        ? data
+        : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    const message = decodeClientMessage(packet);
+    if (!message) {
+      disconnect("invalid_packet");
+      return;
+    }
+    if (!playerId) {
+      if (message.type !== "hello" || typeof message.ticket !== "string") {
+        disconnect("invalid_packet");
+        return;
+      }
+      if (message.protocol !== PROTOCOL_VERSION) {
+        disconnect("invalid_protocol");
+        return;
+      }
+      connectedRoom = rooms.consumeTicket(message.ticket, gameId);
+      if (!connectedRoom) {
+        disconnect("invalid_ticket");
+        return;
+      }
+      if (connectedRoom.full) {
+        disconnect("game_full");
+        return;
+      }
+      const player = connectedRoom.addHuman(socket, String(message.name ?? ""));
+      playerId = player.id;
+      clearTimeout(helloTimeout);
+      return;
+    }
+    if (message.type === "hello") {
+      disconnect("invalid_packet");
+      return;
+    }
+    connectedRoom?.handleMessage(playerId, message);
   });
 
   socket.on("close", () => {

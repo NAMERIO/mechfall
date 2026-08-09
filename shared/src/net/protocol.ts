@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export const GAME = {
   tickRate: 30,
@@ -94,7 +94,7 @@ export interface ServerSnapshot {
   serverTime: number;
   sequence: number;
   selfId: string;
-  roomId: string;
+  gameId: string;
   players: PlayerState[];
   round: RoundState;
   event?: GameEvent;
@@ -128,7 +128,7 @@ export type ClientMessage =
 
 export type ServerMessage =
   | ServerSnapshot
-  | { type: "welcome"; id: string; roomId: string; protocol: number }
+  | { type: "welcome"; id: string; gameId: string; protocol: number }
   | { type: "pong"; sentAt: number; serverTime: number }
   | { type: "paintStroke"; playerId: string; stroke: PaintStroke }
   | { type: "paintStrokes"; playerId: string; strokes: PaintStroke[] }
@@ -136,12 +136,25 @@ export type ServerMessage =
   | { type: "paintReset"; playerId?: string }
   | { type: "error"; code: string; message: string };
 
-export interface MatchmakeResponse {
-  roomId: string;
+export interface FindGameMatchData {
+  gameId: string;
   ticket: string;
-  wsUrl: string;
+  urls: string[];
   protocol: number;
 }
+
+export type FindGameResponse =
+  | { type: "success"; res: FindGameMatchData }
+  | { type: "error"; error: "full" | "invalid_game_id" | "invalid_protocol" };
+
+export type GameWsDisconnectReason =
+  | "game_not_found"
+  | "game_full"
+  | "invalid_packet"
+  | "invalid_protocol"
+  | "invalid_ticket"
+  | "rate_limited"
+  | "server_restart";
 
 export function isHexColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);

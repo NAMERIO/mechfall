@@ -38,7 +38,20 @@ pnpm --filter @mechfall/client dev
 pnpm --filter @mechfall/server dev
 ```
 
-Three server-controlled bots are added to each room so local matches can be tested with one browser. Open another browser tab to test multiplayer.
+Three server-controlled bots are added to each game so local matches can be tested with one browser. Open another browser tab and enter the same six-character game ID to test multiplayer.
+
+Leave the **GAME ID** field empty to find a public game. Enter an existing ID to join that exact game, or share the generated `?gameId=ABC123` URL. Clicking the game ID in the HUD copies it.
+
+### Multiplayer protocol
+
+The networking layout follows the same broad flow as Survev:
+
+1. `POST /api/find_game` validates the protocol and returns `{ gameId, ticket, urls }`.
+2. The client opens `/play?gameId=...` and sends the ticket in its first WebSocket packet.
+3. WebSocket messages are binary frames beginning with a stable one-byte packet type from `shared/src/net/packets.ts`.
+4. The server owns movement, rounds, roles, painting, shotgun hits, scores, and snapshots for each isolated game.
+
+Join tickets expire after 30 seconds and can only be consumed once. Unknown game IDs, protocol mismatches, text frames, forged packet IDs, and excessive message rates are rejected by the server.
 
 ### Checks
 

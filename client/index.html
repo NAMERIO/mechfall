@@ -33,6 +33,10 @@
           <span>CALLSIGN</span>
           <input id="name-input" maxlength="18" autocomplete="nickname" value="Drifter" />
         </label>
+        <label class="game-id-field">
+          <span>GAME ID</span>
+          <input id="game-id-input" maxlength="6" autocomplete="off" spellcheck="false" placeholder="PUBLIC MATCH" />
+        </label>
         <button id="play-button" class="play-button">
           <span>DROP IN</span>
           <small id="server-label">CHECKING SERVER…</small>
@@ -59,12 +63,12 @@
     <div id="loading" class="loading hidden">
       <div class="loader-mark"><i></i><i></i><i></i></div>
       <strong>ENTERING THE FACTORY</strong>
-      <span id="loading-status">Finding a room…</span>
+      <span id="loading-status">Finding a game…</span>
     </div>
 
     <div id="hud" class="hud hidden">
       <div class="hud-top">
-        <section class="room-chip"><span>ROOM</span><strong id="room-code">------</strong></section>
+        <section class="room-chip" title="Click to copy game ID"><span>GAME ID</span><strong id="game-code">------</strong></section>
         <section class="round-clock">
           <span id="phase-label">WARMUP</span>
           <strong id="timer">0:00</strong>

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#121b21" />
+    <meta name="description" content="MECHFALL — paint, disappear, survive." />
+    <title>MECHFALL</title>
+  </head>
+  <body>
+    <div id="game"></div>
+
+    <main id="menu" class="menu-shell">
+      <div class="brand-block">
+        <div class="eyebrow"><span class="live-dot"></span> LIVE PROTOTYPE / ALPHA 01</div>
+        <h1>MECH<span>FALL</span></h1>
+        <p class="tagline">Paint. Disappear. Don’t get caught.</p>
+      </div>
+
+      <section class="play-card panel">
+        <div class="mode-visual" aria-hidden="true">
+          <div class="paint-orb orb-a"></div>
+          <div class="paint-orb orb-b"></div>
+          <div class="paint-orb orb-c"></div>
+          <div class="finder-ring"></div>
+        </div>
+        <div class="mode-copy">
+          <span class="kicker">FEATURED MODE</span>
+          <h2>CHROMA HUNT</h2>
+          <p>Blend into the paint factory. Hunters have two minutes to expose every drifter.</p>
+        </div>
+        <label class="name-field">
+          <span>CALLSIGN</span>
+          <input id="name-input" maxlength="18" autocomplete="nickname" value="Drifter" />
+        </label>
+        <button id="play-button" class="play-button">
+          <span>DROP IN</span>
+          <small id="server-label">CHECKING SERVER…</small>
+        </button>
+        <div class="card-footer">
+          <span>PUBLIC MATCH</span><span>3 PRACTICE BOTS</span><span>12 MAX</span>
+        </div>
+      </section>
+
+      <aside class="how-to panel">
+        <span class="kicker">FIELD MANUAL</span>
+        <div class="manual-row"><kbd>WASD</kbd><span>Move</span></div>
+        <div class="manual-row"><kbd>SPACE</kbd><span>Jump</span></div>
+        <div class="manual-row"><kbd>F</kbd><span>Paint yourself</span></div>
+        <div class="manual-row"><kbd>CLICK</kbd><span>Brush / tag</span></div>
+        <div class="manual-row"><kbd>C</kbd><span>Change shape</span></div>
+        <div class="manual-row"><kbd>Q</kbd><span>Whistle</span></div>
+      </aside>
+
+      <footer class="menu-footer">ORIGINAL WEB MULTIPLAYER PROTOTYPE · THREE.JS + WEBSOCKETS</footer>
+    </main>
+
+    <div id="loading" class="loading hidden">
+      <div class="loader-mark"><i></i><i></i><i></i></div>
+      <strong>ENTERING THE FACTORY</strong>
+      <span id="loading-status">Finding a room…</span>
+    </div>
+
+    <div id="hud" class="hud hidden">
+      <div class="hud-top">
+        <section class="room-chip"><span>ROOM</span><strong id="room-code">------</strong></section>
+        <section class="round-clock">
+          <span id="phase-label">WARMUP</span>
+          <strong id="timer">0:00</strong>
+          <div class="timer-track"><i id="timer-fill"></i></div>
+        </section>
+        <section class="population"><span id="alive-count">0 HIDERS</span><strong id="ping">-- MS</strong></section>
+      </div>
+
+      <div id="event-feed" class="event-feed"></div>
+      <div id="crosshair" class="crosshair"><i></i><i></i><i></i><i></i><b></b></div>
+
+      <section class="role-card">
+        <div id="role-icon" class="role-icon">◈</div>
+        <div><span>YOU ARE</span><strong id="role-label">HIDER</strong><small id="role-tip">Aim at a surface and click to copy its color</small></div>
+      </section>
+
+      <section id="paint-panel" class="paint-panel panel-lite">
+        <div class="paint-readout"><i id="paint-swatch"></i><span><small>ACTIVE COAT</small><strong id="paint-hex">#F5F0DF</strong></span></div>
+        <label><span>CUSTOM</span><input id="color-input" type="color" value="#f5f0df" /></label>
+        <button id="paint-button"><kbd>F</kbd><span>PAINT</span></button>
+        <button id="pose-button"><kbd>C</kbd><span id="pose-label">STAND</span></button>
+        <button id="whistle-button"><kbd>Q</kbd><span>WHISTLE</span></button>
+      </section>
+
+      <section id="paint-mode-ui" class="paint-mode-ui hidden">
+        <header>
+          <span>CHROMA STUDIO</span>
+          <strong>PAINT YOUR DISGUISE</strong>
+          <small>Drag to paint · right-drag to orbit · press E to sample the environment</small>
+        </header>
+        <div id="brush-cursor" class="brush-cursor"></div>
+        <div class="paint-toolbar panel-lite">
+          <div class="palette" aria-label="Quick paint colors">
+            <button data-paint-color="#d9564a" style="--swatch:#d9564a"></button>
+            <button data-paint-color="#e7b844" style="--swatch:#e7b844"></button>
+            <button data-paint-color="#4a9d91" style="--swatch:#4a9d91"></button>
+            <button data-paint-color="#4778a8" style="--swatch:#4778a8"></button>
+            <button data-paint-color="#8067a8" style="--swatch:#8067a8"></button>
+            <button data-paint-color="#c8b899" style="--swatch:#c8b899"></button>
+          </div>
+          <label class="brush-size"><span>BRUSH SIZE</span><input id="brush-size" type="range" min="2" max="18" value="7" /></label>
+          <button id="eyedropper-button" class="tool-button"><b>⌾</b><span>EYEDROPPER</span><small>PRESS E</small></button>
+          <button id="clear-paint-button" class="tool-button"><b>↺</b><span>CLEAR</span><small>START OVER</small></button>
+          <button id="done-paint-button" class="done-paint-button">DONE PAINTING <kbd>F</kbd></button>
+        </div>
+      </section>
+
+      <div id="lock-hint" class="lock-hint">CLICK TO CAPTURE MOUSE</div>
+      <div id="action-hint" class="action-hint">PRESS F TO PAINT</div>
+      <div id="toast" class="toast"></div>
+    </div>
+
+    <section id="phase-screen" class="phase-screen hidden">
+      <span id="phase-kicker">ROUND 1</span>
+      <h2 id="phase-title">HIDE</h2>
+      <p id="phase-copy">Paint yourself. Find a shape. Become part of the room.</p>
+    </section>
+
+    <section id="results" class="results hidden">
+      <span class="kicker">ROUND COMPLETE</span>
+      <h2 id="result-title">HIDERS SURVIVE</h2>
+      <p id="result-copy">The factory keeps its secrets.</p>
+      <div class="result-score"><span>YOUR SCORE</span><strong id="score">0000</strong></div>
+      <small>Next round starts automatically</small>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

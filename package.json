@@ -1,0 +1,22 @@
+{
+  "name": "mechfall",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,client -c magenta,cyan \"pnpm --filter @mechfall/server dev\" \"pnpm --filter @mechfall/client dev\"",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm --filter @mechfall/server test",
+    "start": "pnpm --filter @mechfall/server start"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.1",
+    "typescript": "^5.9.2"
+  }
+}

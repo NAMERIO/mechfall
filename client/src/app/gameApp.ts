@@ -1,4 +1,4 @@
-import { GAME, type GameEvent, type PaintStroke, type Pose, type ServerMessage, type ServerSnapshot } from "@mechfall/shared";
+import { GAME, PLAYER_POSES, type GameEvent, type PaintStroke, type Pose, type ServerMessage, type ServerSnapshot } from "@mechfall/shared";
 import { InputController } from "../game/InputController.ts";
 import { WorldRenderer } from "../game/WorldRenderer.ts";
 import { GameConnection } from "../net/GameConnection.ts";
@@ -353,7 +353,7 @@ function setPoseMenu(active: boolean): void {
 
 function selectPose(pose: Pose): void {
   const self = world.getSelf();
-  if (self?.role !== "hider" || !self.alive || !POSES.includes(pose)) return;
+  if (self?.role !== "hider" || !self.alive || !PLAYER_POSES.includes(pose)) return;
   connection?.send({ type: "pose", pose });
   poseLabel.textContent = POSE_LABELS[pose];
   setPoseMenu(false);
@@ -427,8 +427,8 @@ function setBrushSize(size: number): void {
 function cyclePose(): void {
   const self = world.getSelf();
   if (self?.role !== "hider" || !self.alive) return;
-  const index = POSES.indexOf(self.pose);
-  selectPose(POSES[(index + 1) % POSES.length] ?? "stand");
+  const index = PLAYER_POSES.indexOf(self.pose);
+  selectPose(PLAYER_POSES[(index + 1) % PLAYER_POSES.length] ?? "stand");
 }
 
 function whistle(): void {
@@ -487,17 +487,23 @@ window.addEventListener("beforeunload", () => {
   connection?.close();
 });
 
-const POSES: Pose[] = ["stand", "wave", "star", "balance", "squat", "handsHead", "sit", "kneel", "bow", "curl"];
-
 const POSE_LABELS: Record<Pose, string> = {
   stand: "STAND",
-  wave: "WAVE",
-  star: "STAR",
-  balance: "BALANCE",
-  squat: "SQUAT",
-  handsHead: "HANDS UP",
+  aPose: "A POSE",
+  backBend: "BACK BEND",
+  bridge: "BRIDGE",
+  crossLegged: "CROSS LEGGED",
+  crouchedFetal: "CROUCHED FETAL",
+  curledUp: "CURLED UP",
+  fetal: "FETAL",
+  handOnHip: "HAND ON HIP",
+  layDown: "LAY DOWN",
+  handUp: "HAND UP",
+  mermaid: "MERMAID",
+  openWide: "OPEN WIDE",
+  sideLying: "SIDE LYING",
   sit: "SIT",
-  kneel: "KNEEL",
-  bow: "BOW",
-  curl: "CURL"
+  tPose: "T POSE",
+  tree: "TREE",
+  wideSquat: "WIDE SQUAT"
 };

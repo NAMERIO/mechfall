@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
   GAME,
+  PLAYER_POSES,
   PROTOCOL_VERSION,
   SPAWN_POINTS,
   WORLD_BOXES,
@@ -317,7 +318,7 @@ export class GameRoom {
       if (bot.role === "hider") {
         const box = WORLD_BOXES[Math.floor(Math.random() * WORLD_BOXES.length)];
         if (box) bot.color = box.color;
-        bot.pose = Math.random() > 0.55 ? "curl" : "squat";
+        bot.pose = Math.random() > 0.55 ? "fetal" : "wideSquat";
       }
     }
     this.steerBot(bot, bot.botTarget.x, bot.botTarget.z);
@@ -385,7 +386,7 @@ function sanitizeName(name: string): string {
 }
 
 function isPose(value: unknown): value is Pose {
-  return value === "stand" || value === "wave" || value === "star" || value === "balance" || value === "squat" || value === "handsHead" || value === "sit" || value === "kneel" || value === "bow" || value === "curl";
+  return typeof value === "string" && PLAYER_POSES.includes(value as Pose);
 }
 
 function normalizeAngle(value: number): number {

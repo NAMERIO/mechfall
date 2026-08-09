@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
+  GAME,
   WORLD_BOXES,
   WORLD_SIZE,
   type PaintPart,
@@ -39,9 +40,9 @@ interface Avatar {
   rightLeg?: THREE.Mesh;
   visual?: THREE.Object3D;
   mixer?: THREE.AnimationMixer;
-  poseClips?: Map<string, THREE.AnimationClip>;
-  activePose?: Pose;
-  walkBones?: Array<{ bone: THREE.Object3D; base: THREE.Quaternion; direction: number; amount: number }>;
+  actions?: Map<string, THREE.AnimationAction>;
+  activeAction?: THREE.AnimationAction;
+  activeAnimation?: string;
   hunterMark: THREE.Group;
   whistleRing: THREE.Mesh;
   state: PlayerState;
@@ -132,7 +133,7 @@ export class WorldRenderer {
         avatar.baseColor = player.color;
         this.redrawPaint(avatar);
       }
-      for (const surface of avatar.paintSurfaces.values()) surface.material.roughness = player.pose === "curl" ? 0.36 : 0.7;
+      for (const surface of avatar.paintSurfaces.values()) surface.material.roughness = COMPACT_POSES.has(player.pose) ? 0.48 : 0.7;
       avatar.root.visible = player.alive;
       avatar.hunterMark.visible = player.role === "hunter";
       this.setPose(avatar, player.pose);
@@ -352,18 +353,19 @@ export class WorldRenderer {
 
   private async loadCharacterModel(): Promise<void> {
     try {
-      const gltf = await new GLTFLoader().loadAsync("/models/mechfall-character.glb");
+      const gltf = await new GLTFLoader().loadAsync("/models/chameleon-man-pro.glb");
       this.characterTemplate = gltf.scene;
       this.characterAnimations = gltf.animations;
 
-      // Replace any fallback avatars created while the small GLB was loading.
       for (const [id, oldAvatar] of [...this.avatars]) {
         if (!oldAvatar.procedural) continue;
         const replacement = this.createModelAvatar(oldAvatar.state);
         replacement.root.position.copy(oldAvatar.root.position);
         replacement.root.rotation.copy(oldAvatar.root.rotation);
+        replacement.root.visible = oldAvatar.root.visible;
         replacement.serverPosition.copy(oldAvatar.serverPosition);
         replacement.target.copy(oldAvatar.target);
+        replacement.targetYaw = oldAvatar.targetYaw;
         replacement.strokes = [...oldAvatar.strokes];
         this.redrawPaint(replacement);
         this.scene.remove(oldAvatar.root);
@@ -371,7 +373,7 @@ export class WorldRenderer {
         this.avatars.set(id, replacement);
       }
     } catch (error) {
-      console.warn("Character model failed to load; using the procedural fallback.", error);
+      console.warn("Chameleon Man Pro failed to load; using the procedural fallback.", error);
     }
   }
 
@@ -383,10 +385,11 @@ export class WorldRenderer {
     if (!this.characterTemplate) return this.createProceduralAvatar(state);
     const root = new THREE.Group();
     const visual = cloneSkeleton(this.characterTemplate);
+    visual.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(visual);
     const size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
-    const scale = size.y > 0 ? 2.45 / size.y : 1;
+    const scale = size.y > 0 ? CHARACTER_HEIGHT / size.y : 1;
     visual.scale.setScalar(scale);
     visual.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
     root.add(visual);
@@ -400,7 +403,7 @@ export class WorldRenderer {
     context.fillRect(0, 0, canvas.width, canvas.height);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
-    const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.68, metalness: 0.02 });
+    const material = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.72, metalness: 0 });
     const paintSurfaces = new Map<PaintPart, PaintSurface>();
     let characterMesh: THREE.Mesh | undefined;
     visual.traverse((child) => {
@@ -411,11 +414,11 @@ export class WorldRenderer {
       child.userData.paintPart = "body" satisfies PaintPart;
       characterMesh ??= child;
     });
-    if (!characterMesh) throw new Error("Character GLB does not contain a mesh");
+    if (!characterMesh) throw new Error("Chameleon Man Pro does not contain a mesh");
     paintSurfaces.set("body", { mesh: characterMesh, canvas, context, texture, material });
 
     const hunterMark = new THREE.Group();
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.055, 8, 24), new THREE.MeshBasicMaterial({ color: "#ff594f" }));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.055, 8, 24), new THREE.MeshBasicMaterial({ color: "#ff594f" }));
     ring.rotation.x = Math.PI / 2;
     ring.position.y = 2.68;
     hunterMark.add(ring);
@@ -431,7 +434,7 @@ export class WorldRenderer {
     root.add(whistleRing);
 
     const mixer = new THREE.AnimationMixer(visual);
-    const poseClips = new Map(this.characterAnimations.map((clip) => [clip.name, clip]));
+    const actions = new Map(this.characterAnimations.map((clip) => [clip.name, mixer.clipAction(clip)]));
     const avatar: Avatar = {
       root,
       serverPosition: root.position.clone(),
@@ -444,13 +447,12 @@ export class WorldRenderer {
       procedural: false,
       visual,
       mixer,
-      poseClips,
+      actions,
       hunterMark,
       whistleRing,
       state
     };
     this.pendingPaint.delete(state.id);
-    this.setPose(avatar, state.pose, true);
     this.redrawPaint(avatar);
     return avatar;
   }
@@ -563,7 +565,7 @@ export class WorldRenderer {
   }
 
   private drawStroke(avatar: Avatar, stroke: PaintStroke): void {
-    const surface = avatar.paintSurfaces.get(stroke.part);
+    const surface = avatar.paintSurfaces.get(stroke.part) ?? avatar.paintSurfaces.get("body");
     if (!surface) return;
     const x = stroke.u * surface.canvas.width;
     const y = (1 - stroke.v) * surface.canvas.height;
@@ -577,37 +579,34 @@ export class WorldRenderer {
     surface.texture.needsUpdate = true;
   }
 
-  private setPose(avatar: Avatar, pose: PlayerState["pose"], force = false): void {
-    if (!avatar.procedural) {
-      if (!force && avatar.activePose === pose) return;
-      avatar.activePose = pose;
-      avatar.mixer?.stopAllAction();
-      const clip = avatar.poseClips?.get(POSE_CLIPS[pose]);
-      if (clip && avatar.mixer) {
-        const action = avatar.mixer.clipAction(clip);
-        action.reset().setLoop(THREE.LoopOnce, 1).play();
-        action.time = clip.duration;
-        action.paused = true;
-        avatar.mixer.update(0);
-      }
-      if (pose === "stand" && avatar.visual) {
-        avatar.walkBones = [
-          ["thigh.L_22", 1, 1],
-          ["thigh.R_27", -1, 1],
-          ["upper_arm.L_5", -1, 0.7],
-          ["upper_arm.R_11", 1, 0.7]
-        ].flatMap(([name, direction, amount]) => {
-          const bone = avatar.visual?.getObjectByName(String(name));
-          return bone ? [{ bone, base: bone.quaternion.clone(), direction: Number(direction), amount: Number(amount) }] : [];
-        });
-      }
+  private setAvatarAnimation(avatar: Avatar, name: string, looping: boolean, timeScale = 1): void {
+    if (avatar.procedural || avatar.activeAnimation === name) {
+      avatar.activeAction?.setEffectiveTimeScale(timeScale);
       return;
     }
+    const next = avatar.actions?.get(name);
+    if (!next) return;
 
+    avatar.activeAction?.fadeOut(0.12);
+    next.reset();
+    next.enabled = true;
+    next.clampWhenFinished = !looping;
+    next.setLoop(looping ? THREE.LoopRepeat : THREE.LoopOnce, looping ? Infinity : 1);
+    next.setEffectiveWeight(1);
+    next.setEffectiveTimeScale(timeScale);
+    next.fadeIn(0.12).play();
+    if (!looping) next.paused = true;
+    avatar.activeAction = next;
+    avatar.activeAnimation = name;
+    avatar.mixer?.update(0);
+  }
+
+  private setPose(avatar: Avatar, pose: PlayerState["pose"]): void {
+    if (!avatar.procedural) return;
     const { body, head, leftArm, rightArm, leftLeg, rightLeg } = avatar;
     if (!body || !head || !leftArm || !rightArm || !leftLeg || !rightLeg) return;
-    const compact = pose === "squat" || pose === "sit" || pose === "kneel" || pose === "curl";
-    const curled = pose === "curl";
+    const compact = COMPACT_POSES.has(pose);
+    const curled = pose === "fetal" || pose === "crouchedFetal" || pose === "curledUp";
     body.scale.set(curled ? 1.35 : 1, curled ? 0.62 : compact ? 0.76 : 1, curled ? 1.35 : 1);
     body.position.y = curled ? 0.56 : compact ? 0.86 : 1.1;
     head.position.y = curled ? 0.77 : compact ? 1.5 : 2.05;
@@ -643,20 +642,25 @@ export class WorldRenderer {
       const desiredYaw = id === this.selfId && this.input ? this.input.yaw : avatar.targetYaw;
       const yawResponse = id === this.selfId ? 1 : 1 - Math.exp(-18 * dt);
       avatar.root.rotation.y += shortestAngle(avatar.root.rotation.y, desiredYaw) * yawResponse;
-      const moving = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z) > 0.3;
+      const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
+      const moving = planarSpeed > 0.3;
       const stride = moving ? Math.sin(elapsed * 12) * 0.48 : 0;
-      if (avatar.state.pose === "stand") {
-        if (avatar.procedural && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
-          avatar.leftLeg.rotation.x = stride;
-          avatar.rightLeg.rotation.x = -stride;
-          avatar.leftArm.rotation.x = -stride * 0.65;
-          avatar.rightArm.rotation.x = stride * 0.65;
-        } else {
-          for (const walkBone of avatar.walkBones ?? []) {
-            walkBone.bone.quaternion.copy(walkBone.base);
-            if (moving) walkBone.bone.rotateX(stride * walkBone.direction * walkBone.amount);
-          }
-        }
+      if (avatar.procedural && avatar.state.pose === "stand" && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
+        avatar.leftLeg.rotation.x = stride;
+        avatar.rightLeg.rotation.x = -stride;
+        avatar.leftArm.rotation.x = -stride * 0.65;
+        avatar.rightArm.rotation.x = stride * 0.65;
+      } else if (!avatar.procedural) {
+        const running = avatar.state.role === "hunter";
+        const clipName = avatar.state.pose !== "stand"
+          ? POSE_CLIPS[avatar.state.pose]
+          : moving
+            ? running ? RUN_CLIP : WALK_CLIP
+            : POSE_CLIPS.stand;
+        const expectedSpeed = running ? GAME.hunterSpeed : GAME.moveSpeed;
+        const timeScale = moving ? THREE.MathUtils.clamp(planarSpeed / expectedSpeed, 0.7, 1.35) : 1;
+        this.setAvatarAnimation(avatar, clipName, avatar.state.pose === "stand" && moving, timeScale);
+        avatar.mixer?.update(dt);
       }
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
       if (avatar.whistleRing.visible) {
@@ -698,28 +702,61 @@ function shortestAngle(from: number, to: number): number {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
 
+const CHARACTER_HEIGHT = 2.45;
+const WALK_CLIP = "ChameleonMan|Walking";
+const RUN_CLIP = "ChameleonMan|Running";
+
 const POSE_CLIPS: Record<Pose, string> = {
-  stand: "Pose9",
-  wave: "Pose17",
-  star: "Pose18",
-  balance: "Pose13",
-  squat: "Pose19",
-  handsHead: "Pose10",
-  sit: "Pose15",
-  kneel: "Pose14",
-  bow: "Pose11",
-  curl: "Pose12"
+  stand: "ChameleonMan|Pose_Straight",
+  aPose: "ChameleonMan|Pose_A",
+  backBend: "ChameleonMan|Pose_BackBend",
+  bridge: "ChameleonMan|Pose_Bridge",
+  crossLegged: "ChameleonMan|Pose_CrossLegged",
+  crouchedFetal: "ChameleonMan|Pose_CrouchedFetal",
+  curledUp: "ChameleonMan|Pose_CurledUpSit",
+  fetal: "ChameleonMan|Pose_FetalPose",
+  handOnHip: "ChameleonMan|Pose_HandOnHip",
+  layDown: "ChameleonMan|Pose_LayDown",
+  handUp: "ChameleonMan|Pose_LeftHandUp",
+  mermaid: "ChameleonMan|Pose_MermaidSit",
+  openWide: "ChameleonMan|Pose_OpenWide",
+  sideLying: "ChameleonMan|Pose_SideLying",
+  sit: "ChameleonMan|Pose_Sit",
+  tPose: "ChameleonMan|Pose_T",
+  tree: "ChameleonMan|Pose_Tree",
+  wideSquat: "ChameleonMan|Pose_WideSquat"
 };
+
+const COMPACT_POSES = new Set<Pose>([
+  "bridge",
+  "crossLegged",
+  "crouchedFetal",
+  "curledUp",
+  "fetal",
+  "layDown",
+  "mermaid",
+  "sideLying",
+  "sit",
+  "wideSquat"
+]);
 
 const POSE_CAMERA_HEIGHT: Record<Pose, number> = {
   stand: 1.35,
-  wave: 1.35,
-  star: 1.35,
-  balance: 1.25,
-  squat: 0.95,
-  handsHead: 1.45,
-  sit: 0.9,
-  kneel: 1,
-  bow: 1,
-  curl: 0.7
+  aPose: 1.35,
+  backBend: 0.95,
+  bridge: 0.55,
+  crossLegged: 0.75,
+  crouchedFetal: 0.65,
+  curledUp: 0.7,
+  fetal: 0.55,
+  handOnHip: 1.35,
+  layDown: 0.45,
+  handUp: 1.4,
+  mermaid: 0.72,
+  openWide: 1.25,
+  sideLying: 0.45,
+  sit: 0.8,
+  tPose: 1.35,
+  tree: 1.15,
+  wideSquat: 0.9
 };

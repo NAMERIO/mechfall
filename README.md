@@ -67,9 +67,9 @@ The production server hosts the built client and accepts these environment varia
 
 Put the server behind an HTTPS reverse proxy for public hosting so browsers connect over secure WebSockets.
 
-## Credits
+## Licensed assets
 
-The character model is [“meccha chameleon guy”](https://sketchfab.com/3d-models/meccha-chameleon-guy-12df5b42bdc040bba08ff89cbf0c2692) by photon (`Professor_E12`), used under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See [client/public/models/ATTRIBUTION.md](client/public/models/ATTRIBUTION.md) for full asset details and pose references.
+The player character uses [Chameleon Man Pro (Meccha Man)](https://www.fab.com/listings/735aec34-4949-465c-ad93-848d235996bb) by StuffKit under the [Fab Standard License](https://www.fab.com/eula). Asset details and project modifications are recorded in [client/public/models/ATTRIBUTION.md](client/public/models/ATTRIBUTION.md).
 
 ## Disclaimer
 

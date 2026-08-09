@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export const GAME = {
   tickRate: 30,
@@ -21,7 +21,27 @@ export const GAME = {
 } as const;
 
 export type Role = "hunter" | "hider" | "spectator";
-export type Pose = "stand" | "wave" | "star" | "balance" | "squat" | "handsHead" | "sit" | "kneel" | "bow" | "curl";
+export const PLAYER_POSES = [
+  "stand",
+  "aPose",
+  "backBend",
+  "bridge",
+  "crossLegged",
+  "crouchedFetal",
+  "curledUp",
+  "fetal",
+  "handOnHip",
+  "layDown",
+  "handUp",
+  "mermaid",
+  "openWide",
+  "sideLying",
+  "sit",
+  "tPose",
+  "tree",
+  "wideSquat"
+] as const;
+export type Pose = (typeof PLAYER_POSES)[number];
 export type RoundPhase = "waiting" | "hiding" | "hunting" | "results";
 export type PaintPart = "body" | "head" | "leftArm" | "rightArm" | "leftLeg" | "rightLeg";
 

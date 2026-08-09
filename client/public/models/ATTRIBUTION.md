@@ -1,10 +1,11 @@
-# Character model attribution
+# Licensed character asset
 
-`mechfall-character.glb` is **“meccha chameleon guy”** by **photon (that one larry)** (`Professor_E12`).
+`chameleon-man-pro.glb` is derived from **Chameleon Man Pro (Meccha Man)** by **StuffKit**.
 
-- Source: <https://sketchfab.com/3d-models/meccha-chameleon-guy-12df5b42bdc040bba08ff89cbf0c2692>
-- License: [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/)
-- Changes in MECHFALL: runtime material replacement, texture painting, normalized scale, pose selection, and procedural walking motion.
+- Source: <https://www.fab.com/listings/735aec34-4949-465c-ad93-848d235996bb>
+- License: [Fab Standard License](https://www.fab.com/eula)
+- Original purchased file: `client/assets/source/chameleon-man-pro/chameleonman.fbx`
+- Runtime file: `client/public/models/chameleon-man-pro.glb`
+- Project changes: FBX-to-GLB conversion, normalized runtime scale, canvas-based paint material, animation mapping, and networked pose selection.
 
-Additional pose-shape references were provided by the CC BY models published by [`adu2763`](https://sketchfab.com/adu2763) on Sketchfab. Those static reference meshes are not redistributed in this repository.
-
+This is a licensed project asset, not an open-source standalone model. Do not redistribute the FBX or GLB separately from the game project.

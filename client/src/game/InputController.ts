@@ -18,6 +18,7 @@ export class InputController {
   onToggleCollisionDebug?: () => void;
   private paintMode = false;
   private poseMenuHeld = false;
+  private freeLookHeld = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (event) => {
@@ -44,6 +45,7 @@ export class InputController {
     window.addEventListener("blur", () => {
       this.keys.clear();
       this.jumpQueued = false;
+      this.freeLookHeld = false;
       if (this.poseMenuHeld) {
         this.poseMenuHeld = false;
         this.onPoseMenuEnd?.();
@@ -51,6 +53,15 @@ export class InputController {
     });
     document.addEventListener("mousemove", (event) => {
       if (this.paintMode || document.pointerLockElement !== this.canvas) return;
+      if (this.freeLookHeld) {
+        this.cameraYawOffset = normalizeAngle(this.cameraYawOffset - event.movementX * 0.0022);
+        const cameraPitch = Math.max(
+          -0.85,
+          Math.min(0.48, this.pitch + this.cameraPitchOffset - event.movementY * 0.0018)
+        );
+        this.cameraPitchOffset = cameraPitch - this.pitch;
+        return;
+      }
       this.yaw = normalizeAngle(this.yaw - event.movementX * 0.0022);
       this.pitch = Math.max(-0.85, Math.min(0.48, this.pitch - event.movementY * 0.0018));
     });
@@ -58,7 +69,14 @@ export class InputController {
       if (this.paintMode) return;
       event.preventDefault();
       if (document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock().catch(() => {});
+      if (event.button === 2) this.freeLookHeld = true;
       if (event.button === 0) this.onAction?.();
+    });
+    window.addEventListener("mouseup", (event) => {
+      if (event.button === 2) this.freeLookHeld = false;
+    });
+    document.addEventListener("pointerlockchange", () => {
+      if (document.pointerLockElement !== this.canvas) this.freeLookHeld = false;
     });
   }
 
@@ -98,12 +116,23 @@ export class InputController {
     if (active && document.pointerLockElement === this.canvas) document.exitPointerLock();
   }
 
+  updateCamera(dt: number): void {
+    if (this.freeLookHeld) return;
+    const response = 1 - Math.exp(-FREE_LOOK_RECENTER_RESPONSE * dt);
+    this.cameraYawOffset *= 1 - response;
+    this.cameraPitchOffset *= 1 - response;
+    if (Math.abs(this.cameraYawOffset) < 0.0001) this.cameraYawOffset = 0;
+    if (Math.abs(this.cameraPitchOffset) < 0.0001) this.cameraPitchOffset = 0;
+  }
+
   private faceCamera(): void {
     if (this.paintMode) return;
     this.yaw = normalizeAngle(this.yaw + this.cameraYawOffset);
     this.cameraYawOffset = 0;
   }
 }
+
+const FREE_LOOK_RECENTER_RESPONSE = 9;
 
 function normalizeAngle(value: number): number {
   return Math.atan2(Math.sin(value), Math.cos(value));

@@ -1353,6 +1353,7 @@ export class WorldRenderer {
     const selfAvatar = this.avatars.get(this.selfId);
     const focus = selfAvatar?.state.alive ? selfAvatar : [...this.avatars.values()].find((avatar) => avatar.state.alive) ?? selfAvatar;
     if (focus) {
+      this.input?.updateCamera(dt);
       const inputYaw = this.input?.yaw ?? focus.state.yaw;
       const yaw = inputYaw + (this.input?.cameraYawOffset ?? 0) + (this.paintView ? this.paintOrbitYaw : 0);
       const pitch = (this.input?.pitch ?? -0.2) + (this.input?.cameraPitchOffset ?? 0) + (this.paintView ? this.paintOrbitPitch : 0);
@@ -1360,7 +1361,11 @@ export class WorldRenderer {
       const distance = this.cameraDistance;
       const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose], 0));
       const horizontal = Math.cos(pitch) * distance;
-      const desired = target.clone().add(new THREE.Vector3(Math.sin(yaw) * horizontal, 1.2 + Math.sin(-pitch) * distance, Math.cos(yaw) * horizontal));
+      const desired = target.clone().add(new THREE.Vector3(
+        Math.sin(yaw) * horizontal,
+        CAMERA_VERTICAL_LIFT + Math.sin(-pitch) * distance,
+        Math.cos(yaw) * horizontal
+      ));
       const safeDesired = this.resolveCameraObstruction(target, desired);
       this.camera.position.lerp(safeDesired, 1 - Math.exp(-CAMERA_FOLLOW_RESPONSE * dt));
       this.camera.lookAt(target);
@@ -1404,7 +1409,7 @@ export class WorldRenderer {
 function isCameraPositionSafe(position: THREE.Vector3): boolean {
   const worldLimit = (WORLD_SIZE / 2) - CAMERA_COLLISION_RADIUS;
   if (position.x < -worldLimit || position.x > worldLimit || position.z < -worldLimit || position.z > worldLimit) return false;
-  if (position.y < CAMERA_COLLISION_RADIUS || position.y > 5.8) return false;
+  if (position.y < CAMERA_COLLISION_RADIUS || position.y > CAMERA_MAX_WORLD_HEIGHT) return false;
   for (const box of WORLD_BOXES) {
     if (!box.solid) continue;
     if (
@@ -1779,6 +1784,8 @@ const CAMERA_COLLISION_RADIUS = 0.34;
 const CAMERA_COLLISION_BUFFER = 0.18;
 const CAMERA_COLLISION_SEARCH_STEPS = 8;
 const MIN_CAMERA_COLLISION_DISTANCE = 0.45;
+const CAMERA_VERTICAL_LIFT = 2.35;
+const CAMERA_MAX_WORLD_HEIGHT = Math.max(24, WORLD_SIZE * 0.5);
 const CAMERA_ZOOM_RESPONSE = 4.5;
 const CAMERA_FOLLOW_RESPONSE = 3.6;
 const LOCAL_TURN_RESPONSE = 18;

@@ -74,6 +74,7 @@ export class WorldRenderer {
   private readonly pendingPaint = new Map<string, PaintStroke[]>();
   private readonly beforeRenderTasks = new Set<() => void>();
   private selfId = "";
+  private roundPhase: ServerSnapshot["round"]["phase"] = "waiting";
   private input?: InputController;
   private running = true;
   private paintView = false;
@@ -227,6 +228,7 @@ export class WorldRenderer {
 
   applySnapshot(snapshot: ServerSnapshot): void {
     this.selfId = snapshot.selfId;
+    this.roundPhase = snapshot.round.phase;
     const liveIds = new Set(snapshot.players.map((player) => player.id));
     for (const [id, avatar] of this.avatars) {
       if (!liveIds.has(id)) {
@@ -1116,7 +1118,10 @@ export class WorldRenderer {
       const attachedMoving = isAttachedMovement(avatar.state);
       const displayPose = attachedMoving ? "stand" : avatar.state.pose;
       const moving = avatar.state.cling === undefined && planarSpeed > 0.3;
-      const canBodyPitch = id === this.selfId && avatar.state.cling === undefined && displayPose === "stand";
+      const canBodyPitch = id === this.selfId
+        && avatar.state.cling === undefined
+        && displayPose === "stand"
+        && (this.roundPhase === "waiting" || avatar.state.role === "hunter");
       const aimPitch = this.input ? this.input.aim().pitch : 0;
       const targetBodyPitch = canBodyPitch ? THREE.MathUtils.clamp(aimPitch * BODY_PITCH_STRENGTH, -MAX_BODY_PITCH_UP, MAX_BODY_PITCH_DOWN) : 0;
       avatar.bodyPitch = THREE.MathUtils.lerp(avatar.bodyPitch ?? 0, targetBodyPitch, 1 - Math.exp(-BODY_PITCH_RESPONSE * dt));

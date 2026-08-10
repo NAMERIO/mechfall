@@ -267,6 +267,7 @@ export class GameRoom {
       const forward = frozen || stale ? 0 : player.input.forward;
       const strafe = frozen || stale ? 0 : player.input.strafe;
       const canCling = !frozen && !stale && player.role === "hider";
+      const clingRequested = canCling && (player.input.jump || player.input.climb > 0.1);
       if (player.cling) {
         const queuedClimbUp = player.input.jump;
         player.input.jump = false;
@@ -305,6 +306,7 @@ export class GameRoom {
       player.input.jump = false;
 
       if (canCling
+          && clingRequested
           && now >= player.clingDetachedUntil
           && !detachRequested
           && collision) {

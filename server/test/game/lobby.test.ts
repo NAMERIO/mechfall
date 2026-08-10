@@ -248,13 +248,13 @@ test("the authoritative room uses Space/Shift/A/D crawl controls and facing-wall
 
     room.handleMessage(player.id, {
       type: "input",
-      input: { sequence: 1, forward: 1, strafe: 0, jump: false, sprint: false, yaw: -Math.PI / 2 }
+      input: { sequence: 1, forward: 1, strafe: 0, jump: true, sprint: false, climb: 1, yaw: -Math.PI / 2 }
     });
     const attached = await waitForPlayer(
       socket,
       player.id,
       (state) => state.cling?.surfaceId === "center-red",
-      "automatic contact attachment"
+      "Space-requested contact attachment"
     );
 
     room.handleMessage(player.id, {
@@ -335,7 +335,7 @@ test("a nearby stationary player remains unclung until actual wall collision", a
 
     room.handleMessage(player.id, {
       type: "input",
-      input: { sequence: 2, forward: 1, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: -Math.PI / 2 }
+      input: { sequence: 2, forward: 1, strafe: 0, jump: true, sprint: false, climb: 1, detach: false, yaw: -Math.PI / 2 }
     });
     const attached = await waitForPlayer(
       socket,
@@ -360,7 +360,7 @@ test("the authoritative room keeps back and side contact aligned while a clung p
 
     room.handleMessage(player.id, {
       type: "input",
-      input: { sequence: 1, forward: -1, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: BACK_TO_WALL_YAW }
+      input: { sequence: 1, forward: -1, strafe: 0, jump: true, sprint: false, climb: 1, detach: false, yaw: BACK_TO_WALL_YAW }
     });
     const attachedBackFirst = await waitForPlayer(
       socket,
@@ -466,7 +466,7 @@ test("climbing past a ledge mantles onto the platform without the release shove"
   }
 });
 
-test("residual movement still auto-attaches on actual wall contact", async () => {
+test("residual movement does not attach without Space", async () => {
   const room = new GameRoom("CLING2");
   try {
     const socket = new TestSocket();
@@ -479,12 +479,8 @@ test("residual movement still auto-attaches on actual wall contact", async () =>
       type: "input",
       input: { sequence: 1, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: -Math.PI / 2 }
     });
-    await waitForPlayer(
-      socket,
-      player.id,
-      (state) => state.cling?.surfaceId === "center-red",
-      "contact attachment after movement input is released"
-    );
+    await delay(160);
+    assert.equal(latestPlayer(socket, player.id)?.cling, undefined);
   } finally {
     room.destroy();
   }

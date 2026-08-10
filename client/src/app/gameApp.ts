@@ -14,6 +14,7 @@ const menu = element<HTMLElement>("#menu");
 const loading = element<HTMLDivElement>("#loading");
 const loadingStatus = element<HTMLSpanElement>("#loading-status");
 const hud = element<HTMLDivElement>("#hud");
+const devCoordinates = import.meta.env.DEV ? createDevCoordinateReadout(hud) : undefined;
 const playButton = element<HTMLButtonElement>("#play-button");
 const serverLabel = element<HTMLElement>("#server-label");
 const nameInput = element<HTMLInputElement>("#name-input");
@@ -394,6 +395,10 @@ function updateHud(snapshot: ServerSnapshot): void {
     crosshair.classList.add("hidden");
     return;
   }
+  if (devCoordinates) {
+    const { x, y, z } = self.position;
+    devCoordinates.textContent = `COORDS  X ${x.toFixed(2)}  Y ${y.toFixed(2)}  Z ${z.toFixed(2)}`;
+  }
   const now = Date.now();
   const remaining = Math.max(0, snapshot.round.endsAt - now);
   const seconds = Math.ceil(remaining / 1_000);
@@ -462,6 +467,15 @@ function updateHud(snapshot: ServerSnapshot): void {
     phaseTitle.textContent = "EYES CLOSED";
     phaseCopy.textContent = "The drifters are painting. Your movement is locked until the hunt begins.";
   }
+}
+
+function createDevCoordinateReadout(parent: HTMLElement): HTMLOutputElement {
+  const readout = document.createElement("output");
+  readout.className = "dev-coordinates";
+  readout.setAttribute("aria-label", "Player coordinates");
+  readout.textContent = "COORDS  X --  Y --  Z --";
+  parent.append(readout);
+  return readout;
 }
 
 function announcePhase(snapshot: ServerSnapshot): void {

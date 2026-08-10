@@ -525,6 +525,7 @@ kbd { min-width: 44px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.2);
 .hud button, .hud input, .hud label { pointer-events: auto; }
 .leave-game-button { position: absolute; left: 24px; top: 24px; padding: 9px 12px; border: 1px solid var(--line); background: rgba(17,27,32,.86); color: #aebbb8; cursor: pointer; font: 600 9px "Chakra Petch"; letter-spacing: .1em; backdrop-filter: blur(9px); transition: border-color .15s, color .15s; }
 .leave-game-button:hover { border-color: var(--acid); color: var(--acid); }
+.dev-coordinates { position: absolute; left: 24px; top: 69px; padding: 7px 10px; border: 1px solid rgba(244,210,79,.38); background: rgba(17,27,32,.86); color: var(--acid); font: 600 10px "Chakra Petch", monospace; font-variant-numeric: tabular-nums; letter-spacing: .06em; backdrop-filter: blur(9px); }
 .hud-top { position: absolute; left: 50%; top: 22px; display: grid; grid-template-columns: 130px 230px 130px; align-items: stretch; transform: translateX(-50%); filter: drop-shadow(0 8px 18px rgba(0,0,0,.28)); }
 .room-chip, .population { display: flex; flex-direction: column; justify-content: center; padding: 10px 15px; background: rgba(17,27,32,.86); border: 1px solid var(--line); }
 .room-chip span, .population span { color: #8fa19e; font: 500 8px "Chakra Petch"; letter-spacing: .18em; }

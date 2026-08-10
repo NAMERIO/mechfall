@@ -402,27 +402,27 @@ function updateHud(snapshot: ServerSnapshot): void {
   const displayRole = isLobbyOwner ? "GAME OWNER" : snapshot.round.phase === "waiting" ? "PLAYER" : self.role === "spectator" ? "SPECTATING" : self.role.toUpperCase();
   roleLabel.textContent = displayRole;
   roleIcon.textContent = isLobbyOwner ? "★" : self.role === "hunter" ? "⌖" : self.role === "hider" ? "◈" : "◎";
-  roleTip.textContent = self.cling
-    ? "Attached · Press V to face camera · Hold LMB to center camera · Hold RMB to orbit · Space up · Shift down · A/D sideways · S/away to leave"
-    : snapshot.round.phase === "waiting"
-    ? isLobbyOwner ? "You control when the next round starts" : "The game owner controls the start"
-    : self.role === "hunter"
-    ? canShoot ? "Click LMB to fire · press V to face camera · hold LMB to center camera · hold RMB to orbit · wheel to zoom" : "Shotgun locked · press V to face camera · hold LMB to center camera · hold RMB to orbit"
-    : self.role === "hider"
-      ? "Press V to face camera · hold LMB to center camera · hold RMB to orbit · press F to paint · wheel to zoom"
-      : "You rejoin when the next round begins";
   paintPanel.classList.toggle("hidden", self.role !== "hider");
-  actionHint.textContent = self.cling
-    ? "V FACE CAMERA · SPACE UP · SHIFT DOWN · A/D SIDEWAYS · S/AWAY RELEASE"
+  roleTip.textContent = self.cling
+    ? "Attached - Mouse look - Space up - Shift down - A/D sideways - S/away to leave"
     : snapshot.round.phase === "waiting"
-    ? isLobbyOwner ? "START WHEN EVERYONE IS READY" : "WAITING FOR GAME OWNER"
-    : canShoot
-      ? "LMB CLICK FIRE · V FACE CAMERA · LMB CENTER CAMERA · RMB HOLD ORBIT"
+      ? isLobbyOwner ? "You control when the next round starts" : "The game owner controls the start"
       : self.role === "hunter"
-        ? "SHOTGUN LOCKED · V FACE CAMERA · LMB CENTER CAMERA · RMB HOLD ORBIT"
+        ? canShoot ? "Mouse look - LMB fire - WASD move - wheel to zoom" : "Shotgun locked - Mouse look - WASD move - wheel to zoom"
         : self.role === "hider"
-          ? "V FACE CAMERA · LMB CENTER CAMERA · RMB HOLD ORBIT · F PAINT"
-          : "SPECTATING · RMB HOLD ORBIT · WHEEL ZOOM";
+          ? "Mouse look - WASD move - F paint - R poses - 1 whistle - wheel to zoom"
+          : "You rejoin when the next round begins";
+  actionHint.textContent = self.cling
+    ? "MOUSE LOOK - SPACE UP - SHIFT DOWN - A/D SIDEWAYS - S/AWAY RELEASE"
+    : snapshot.round.phase === "waiting"
+      ? isLobbyOwner ? "START WHEN EVERYONE IS READY" : "WAITING FOR GAME OWNER"
+      : canShoot
+        ? "MOUSE LOOK - LMB FIRE - WASD MOVE - WHEEL ZOOM"
+        : self.role === "hunter"
+          ? "SHOTGUN LOCKED - MOUSE LOOK - WASD MOVE - WHEEL ZOOM"
+          : self.role === "hider"
+            ? "MOUSE LOOK - WASD MOVE - F PAINT - R POSES - 1 WHISTLE"
+            : "SPECTATING - WHEEL ZOOM";
   paintSwatch.style.backgroundColor = paintColor;
   paintHex.textContent = paintColor.toUpperCase();
   poseLabel.textContent = POSE_LABELS[self.pose];

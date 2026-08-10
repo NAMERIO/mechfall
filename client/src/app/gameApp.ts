@@ -369,25 +369,25 @@ function updateHud(snapshot: ServerSnapshot): void {
   roleLabel.textContent = displayRole;
   roleIcon.textContent = isLobbyOwner ? "★" : self.role === "hunter" ? "⌖" : self.role === "hider" ? "◈" : "◎";
   roleTip.textContent = self.cling
-    ? "Attached · Hold LMB to face · Hold RMB to orbit · Space up · Shift down · A/D sideways · S/away to leave"
+    ? "Attached · Press V to face camera · Hold LMB to center camera · Hold RMB to orbit · Space up · Shift down · A/D sideways · S/away to leave"
     : snapshot.round.phase === "waiting"
     ? isLobbyOwner ? "You control when the next round starts" : "The game owner controls the start"
     : self.role === "hunter"
-    ? canShoot ? "Click LMB to fire · hold LMB to face · hold RMB to orbit · wheel to zoom" : "Shotgun locked · hold LMB to face · hold RMB to orbit"
+    ? canShoot ? "Click LMB to fire · press V to face camera · hold LMB to center camera · hold RMB to orbit · wheel to zoom" : "Shotgun locked · press V to face camera · hold LMB to center camera · hold RMB to orbit"
     : self.role === "hider"
-      ? "Hold LMB to face · hold RMB to orbit · press F to paint · wheel to zoom"
+      ? "Press V to face camera · hold LMB to center camera · hold RMB to orbit · press F to paint · wheel to zoom"
       : "You rejoin when the next round begins";
   paintPanel.classList.toggle("hidden", self.role !== "hider");
   actionHint.textContent = self.cling
-    ? "SPACE UP · SHIFT DOWN · A/D SIDEWAYS · S/AWAY RELEASE"
+    ? "V FACE CAMERA · SPACE UP · SHIFT DOWN · A/D SIDEWAYS · S/AWAY RELEASE"
     : snapshot.round.phase === "waiting"
     ? isLobbyOwner ? "START WHEN EVERYONE IS READY" : "WAITING FOR GAME OWNER"
     : canShoot
-      ? "LMB CLICK FIRE · LMB HOLD FACE · RMB HOLD ORBIT · WHEEL ZOOM"
+      ? "LMB CLICK FIRE · V FACE CAMERA · LMB CENTER CAMERA · RMB HOLD ORBIT"
       : self.role === "hunter"
-        ? "SHOTGUN LOCKED · LMB HOLD FACE · RMB HOLD ORBIT"
+        ? "SHOTGUN LOCKED · V FACE CAMERA · LMB CENTER CAMERA · RMB HOLD ORBIT"
         : self.role === "hider"
-          ? "LMB HOLD FACE · RMB HOLD ORBIT · F PAINT · WHEEL ZOOM"
+          ? "V FACE CAMERA · LMB CENTER CAMERA · RMB HOLD ORBIT · F PAINT"
           : "SPECTATING · RMB HOLD ORBIT · WHEEL ZOOM";
   paintSwatch.style.backgroundColor = paintColor;
   paintHex.textContent = paintColor.toUpperCase();

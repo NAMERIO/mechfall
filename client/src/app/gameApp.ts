@@ -64,6 +64,8 @@ const brushSizeInput = element<HTMLInputElement>("#brush-size");
 const undoPaintButton = element<HTMLButtonElement>("#undo-paint-button");
 const redoPaintButton = element<HTMLButtonElement>("#redo-paint-button");
 const donePaintButton = element<HTMLButtonElement>("#done-paint-button");
+const whistleAudio = new Audio("/audio/meccha-chameleon-whistle.mp3");
+whistleAudio.preload = "auto";
 
 const world = new WorldRenderer(game);
 const input = new InputController(world.canvas);
@@ -429,6 +431,7 @@ function updateHud(snapshot: ServerSnapshot): void {
 
   if (snapshot.event) {
     if (snapshot.event.type === "shot") world.showShot(snapshot.event.hunterId, snapshot.event.origin, snapshot.event.end);
+    if (snapshot.event.type === "whistle" && snapshot.event.player !== self.name) playWhistleSound();
     showEvent(snapshot.event);
   }
   updateLobby(snapshot);
@@ -778,7 +781,15 @@ function whistle(): void {
   if (self?.role !== "hider" || !self.alive) return;
   connection?.send({ type: "whistle" });
   showToast("WHISTLE SENT · +15 IF READY");
-  playTone(920, 0.13);
+  playWhistleSound();
+}
+
+function playWhistleSound(): void {
+  const sound = whistleAudio.cloneNode() as HTMLAudioElement;
+  sound.volume = 0.18;
+  void sound.play().catch(() => {
+    // Browsers may block remote-player audio until the user has interacted.
+  });
 }
 
 function showEvent(event: GameEvent): void {

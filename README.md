@@ -29,7 +29,7 @@ Start the client and game server together:
 pnpm dev
 ```
 
-Open <http://localhost:5173>. The game server runs on port `3001`.
+Open <http://localhost:3000>. The game server runs on port `3001`.
 
 To run either package separately:
 

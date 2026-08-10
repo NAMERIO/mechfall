@@ -5,7 +5,12 @@ import {
   moveBody,
   moveClingingBody,
   playerContactDistance,
+  resolveWorldHullPenetration,
+  selectClosestHullClingEdge,
   sweepWorldHull,
+  walkableWorldHullHeightAt,
+  walkableWorldHullSupportHeightAt,
+  worldHullHasSolidTop,
   wantsToDetachFromSurface
 } from "../../src/game/physics.ts";
 
@@ -60,6 +65,27 @@ test("smooth convex hulls report authoritative angled contact", () => {
   assert.ok(hit.time > 0 && hit.time < 1);
 });
 
+test("a body left inside a detailed hull corner is resolved during the same tick", () => {
+  const hull = {
+    id: "corner-hull",
+    vertices: [
+      [-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1],
+      [-1, 2, -1], [1, 2, -1], [1, 2, 1], [-1, 2, 1]
+    ],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+  const body = {
+    position: { x: 1.4, y: 0, z: 1.05 },
+    velocity: { x: -5, y: 0, z: -5 }
+  };
+
+  assert.equal(resolveWorldHullPenetration(body, 0, hull), true);
+  approximatelyEqual(body.position.z, 1 + GAME.playerHalfDepth);
+  approximatelyEqual(body.velocity.z, 0);
+});
+
 test("triangle collision meshes preserve their local surface height", () => {
   const mesh = {
     id: "sloped-car-shape",
@@ -72,6 +98,91 @@ test("triangle collision meshes preserve their local surface height", () => {
   approximatelyEqual(worldHullHeightAt(mesh, -0.75, 0)!, 1.125);
   approximatelyEqual(worldHullHeightAt(mesh, 0.75, 0)!, 1.875);
   assert.equal(worldHullHeightAt(mesh, 2, 0), undefined);
+});
+
+test("vehicle hoods and ramps are walkable while steep model faces stay walls", () => {
+  const hood = {
+    id: "walkable-hood",
+    vertices: [[-1, 0.3, -1], [1, 1.1, -1], [1, 1.1, 1], [-1, 0.3, 1]],
+    triangles: [[0, 1, 2], [0, 2, 3]],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+  const windshield = {
+    id: "steep-windshield",
+    vertices: [[-0.25, 0, -1], [0.25, 2, -1], [0.25, 2, 1], [-0.25, 0, 1]],
+    triangles: [[0, 1, 2], [0, 2, 3]],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+
+  approximatelyEqual(walkableWorldHullHeightAt(hood, 0, 0)!, 0.7);
+  assert.equal(walkableWorldHullHeightAt(windshield, 0, 0), undefined);
+});
+
+test("a higher steep car triangle cannot hide behind lower hood support", () => {
+  const mixedSurface = {
+    id: "mixed-hood-corner",
+    vertices: [
+      [-1, 0.5, -1], [1, 0.5, -1], [1, 0.5, 1], [-1, 0.5, 1],
+      [0.2, 0.6, -0.5], [0.6, 1.6, -0.5], [0.6, 1.6, 0.5], [0.2, 0.6, 0.5]
+    ],
+    triangles: [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+
+  assert.equal(walkableWorldHullSupportHeightAt(mixedSurface, 0, 0, 0), undefined);
+});
+
+test("flat-topped detailed models get continuous edge support without flattening cars", () => {
+  const container = {
+    id: "flat-container",
+    vertices: [
+      [-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1],
+      [-1, 2, -1], [1, 2, -1], [1, 2, 1], [-1, 2, 1]
+    ],
+    triangles: [[4, 5, 6], [4, 6, 7]],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+  const carHood = {
+    id: "irregular-car",
+    vertices: [[-1, 0.3, -1], [1, 1.1, -1], [1, 1.1, 1], [-1, 0.3, 1]],
+    triangles: [[0, 1, 2], [0, 2, 3]],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+
+  assert.equal(worldHullHasSolidTop(container), true);
+  assert.equal(worldHullHasSolidTop(carHood), false);
+  approximatelyEqual(walkableWorldHullSupportHeightAt(container, 0, 0, 0)!, 2);
+});
+
+test("detailed parallel hull edges attach climbing to the segment beside the player", () => {
+  const points = [[-2, 2], [-1.96, 1.8], [-0.84, -4], [1, -4], [2, 2]] as const;
+  const start = points[1];
+  const end = points[2];
+  const deltaX = end[0] - start[0];
+  const deltaZ = end[1] - start[1];
+  const length = Math.hypot(deltaX, deltaZ);
+  const normalX = deltaZ / length;
+  const normalZ = -deltaX / length;
+  const contactDistance = playerContactDistance(0, normalX, normalZ);
+  const position = {
+    x: (start[0] + end[0]) / 2 + normalX * contactDistance,
+    z: (start[1] + end[1]) / 2 + normalZ * contactDistance
+  };
+
+  const matched = selectClosestHullClingEdge(points, position, 0, normalX, normalZ);
+  assert.ok(matched);
+  assert.deepEqual(matched.start, start);
+  assert.deepEqual(matched.end, end);
 });
 
 test("back and side collision distances are authoritative on every crate face", () => {

@@ -72,6 +72,7 @@ const KIND_OPTIONS: BoxKind[] = ["wall", "crate", "table", "column", "planter"];
 const PLAYER_RADIUS = 0.48;
 const PLAYER_HEIGHT = 2.15;
 const MOVE_SPEED = 6;
+const TEST_FLY_SPEED = 5;
 const SELECTED_MOVE_SPEED = 7;
 const SELECTED_MOVE_FAST_MULTIPLIER = 3;
 const SELECTED_MOVE_VERTICAL_SPEED = 4;
@@ -148,7 +149,8 @@ document.body.innerHTML = `
       </section>
       <section class="mapmaker-test">
         <button id="mm-test-toggle" type="button">TEST COLLISION: OFF</button>
-        <small>When test is off, WASD moves selected items. Q/E moves up/down. Red = blocked.</small>
+        <small>Test on: WASD moves relative to the camera, E flies up, Q flies down. Red means collision is blocking only that direction.</small>
+        <small>Test off: WASD and Q/E move the selected map item.</small>
       </section>
       <section class="mapmaker-publish">
         <label>MAP NAME <input id="mm-map-name" maxlength="60" value="${escapeHtml(WORLD_NAME)}" /></label>
@@ -1634,22 +1636,61 @@ function makeTestPlayer(): THREE.Group {
 
 function moveTestPlayer(dt: number): void {
   if (!testMode) return;
-  const forward = Number(keys.has("KeyW")) - Number(keys.has("KeyS"));
-  const strafe = Number(keys.has("KeyD")) - Number(keys.has("KeyA"));
-  const length = Math.hypot(forward, strafe);
-  if (length <= 0) return;
+  const forwardInput = Number(keys.has("KeyW")) - Number(keys.has("KeyS"));
+  const strafeInput = Number(keys.has("KeyD")) - Number(keys.has("KeyA"));
+  const verticalInput = Number(keys.has("KeyE")) - Number(keys.has("KeyQ"));
+  const planeLength = Math.hypot(forwardInput, strafeInput);
+  const material = (testPlayer.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+  if (planeLength <= 0 && verticalInput === 0) {
+    material.color.set("#f5f0df");
+    return;
+  }
   const cameraForward = new THREE.Vector3();
   camera.getWorldDirection(cameraForward);
   cameraForward.y = 0;
+  if (cameraForward.lengthSq() <= 0.0001) cameraForward.set(0, 0, -1);
   cameraForward.normalize();
-  const cameraRight = new THREE.Vector3(cameraForward.z, 0, -cameraForward.x);
-  const desired = testPlayer.position.clone()
-    .addScaledVector(cameraForward, (forward / length) * MOVE_SPEED * dt)
-    .addScaledVector(cameraRight, (strafe / length) * MOVE_SPEED * dt);
-  desired.y = 0;
-  const blocked = collidesWithBoxes(desired);
-  if (!blocked) testPlayer.position.copy(desired);
-  ((testPlayer.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.set(blocked ? "#ff5e52" : "#f5f0df");
+  const cameraRight = new THREE.Vector3(-cameraForward.z, 0, cameraForward.x);
+  const movement = new THREE.Vector3();
+  if (planeLength > 0) {
+    movement
+      .addScaledVector(cameraForward, (forwardInput / planeLength) * MOVE_SPEED * dt)
+      .addScaledVector(cameraRight, (strafeInput / planeLength) * MOVE_SPEED * dt);
+  }
+  movement.y = verticalInput * TEST_FLY_SPEED * dt;
+
+  const maximumStep = PLAYER_RADIUS * 0.35;
+  const stepCount = Math.max(1, Math.ceil(movement.length() / maximumStep));
+  const step = movement.multiplyScalar(1 / stepCount);
+  let blocked = false;
+  for (let index = 0; index < stepCount; index += 1) blocked = moveTestPlayerWithSlide(step) || blocked;
+  material.color.set(blocked ? "#ff5e52" : "#f5f0df");
+}
+
+function moveTestPlayerWithSlide(step: THREE.Vector3): boolean {
+  const fullMove = testPlayer.position.clone().add(step);
+  const fullMoveHitsFloor = fullMove.y < 0;
+  fullMove.y = Math.max(0, fullMove.y);
+  if (!fullMoveHitsFloor && !collidesWithBoxes(fullMove)) {
+    testPlayer.position.copy(fullMove);
+    return false;
+  }
+
+  let blocked = fullMoveHitsFloor;
+  for (const axis of ["x", "z", "y"] as const) {
+    if (Math.abs(step[axis]) <= 1e-9) continue;
+    const candidate = testPlayer.position.clone();
+    candidate[axis] += step[axis];
+    if (axis === "y" && candidate.y < 0) {
+      candidate.y = 0;
+      blocked = true;
+      if (candidate.equals(testPlayer.position)) continue;
+    }
+    candidate.y = Math.max(0, candidate.y);
+    if (collidesWithBoxes(candidate)) blocked = true;
+    else testPlayer.position.copy(candidate);
+  }
+  return blocked;
 }
 
 function moveSelectedItem(dt: number): void {
@@ -1669,7 +1710,7 @@ function moveSelectedItem(dt: number): void {
   cameraForward.y = 0;
   if (cameraForward.lengthSq() <= 0.0001) cameraForward.set(0, 0, -1);
   cameraForward.normalize();
-  const cameraRight = new THREE.Vector3(cameraForward.z, 0, -cameraForward.x);
+  const cameraRight = new THREE.Vector3(-cameraForward.z, 0, cameraForward.x);
   const speed = SELECTED_MOVE_SPEED * (isIgnoringFloorSnap() ? SELECTED_MOVE_FAST_MULTIPLIER : 1);
 
   if (planeLength > 0) {
@@ -1709,7 +1750,7 @@ function collidesWithBoxes(position: THREE.Vector3): boolean {
     const maxY = box.position[1] + box.size[1] / 2;
     const minZ = box.position[2] - box.size[2] / 2 - PLAYER_RADIUS;
     const maxZ = box.position[2] + box.size[2] / 2 + PLAYER_RADIUS;
-    if (position.x >= minX && position.x <= maxX && PLAYER_HEIGHT >= minY && position.y <= maxY && position.z >= minZ && position.z <= maxZ) return true;
+    if (position.x >= minX && position.x <= maxX && position.y + PLAYER_HEIGHT >= minY && position.y <= maxY && position.z >= minZ && position.z <= maxZ) return true;
   }
   for (const hull of hulls) {
     if (!hull.solid) continue;

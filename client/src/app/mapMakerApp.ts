@@ -96,7 +96,8 @@ const MIN_COLLISION_SIZE = 0.08;
 const MAX_UNDO_STEPS = 50;
 const MAX_MODEL_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_EXACT_COLLISION_TRIANGLES = 12_000;
-const MAX_OPTIMIZED_COLLISION_POINTS = 1_400;
+const MAX_OPTIMIZED_COLLISION_TRIANGLES = 6_000;
+const MAX_COLLISION_CLUSTER_PASSES = 8;
 
 document.body.className = "mapmaker-page";
 document.body.innerHTML = `
@@ -148,10 +149,10 @@ document.body.innerHTML = `
       </section>
       <section class="mapmaker-import">
         <label>IMPORT MODEL <input id="mm-model-file" type="file" accept=".glb,.gltf,.zip" /></label>
-        <button id="mm-model-smart" type="button">REBUILD EXACT MODEL COLLISION</button>
+        <button id="mm-model-smart" type="button">REBUILD MODEL COLLISION</button>
         <button id="mm-collision-edit" type="button">EDIT COLLISION: OFF</button>
         <button id="mm-clear-model-collision" type="button">REMOVE MODEL COLLISION</button>
-        <small>Normal mode keeps the model and collision together. Detailed models are automatically optimized into one smooth, game-safe collision mesh.</small>
+        <small>Normal mode keeps the model and collision together. Detailed models use welded collision that preserves corners and does not bridge empty space.</small>
         <small id="mm-status">Tip: GLB works best. Zip support needs extracted model files for now.</small>
       </section>
       <section class="mapmaker-test">
@@ -1112,7 +1113,7 @@ function renderList(): void {
     button.type = "button";
     button.className = hull === selectedHull ? "active mapmaker-hull-item" : "mapmaker-hull-item";
     button.disabled = hull.linkedToModel === true && !collisionEditMode;
-    const collisionLabel = hull.optimizedFromModel ? "SMOOTH OPTIMIZED COLLISION" : "EXACT MODEL COLLISION";
+    const collisionLabel = hull.optimizedFromModel ? "WELDED DETAILED COLLISION" : "EXACT MODEL COLLISION";
     button.innerHTML = `<strong>${escapeHtml(hull.id)}</strong><span>${collisionLabel} · ${hull.triangles.length} TRIANGLES${button.disabled ? " · ENABLE EDIT COLLISION" : ""}</span>`;
     button.addEventListener("click", () => selectHull(hull));
     const remove = document.createElement("button");
@@ -1274,7 +1275,7 @@ async function importModel(
     const result = rebuildSmartModelCollision(true);
     if (!result?.created) throw new Error("the model does not contain usable triangle geometry");
     status.textContent = result.optimized
-      ? `Loaded ${file.name}. Its ${result.sourceTriangles.toLocaleString()} visual triangles were reduced to one smooth ${result.triangles.length.toLocaleString()}-triangle game collision mesh.`
+      ? `Loaded ${file.name}. Its ${result.sourceTriangles.toLocaleString()} visual triangles were reduced to one welded detailed ${result.triangles.length.toLocaleString()}-triangle collision mesh without convex bridge faces.`
       : `Loaded ${file.name} with one exact ${result.triangles.length.toLocaleString()}-triangle collision mesh.`;
     return asset;
   } catch (error) {
@@ -1399,7 +1400,7 @@ function rebuildSmartModelCollision(automatic: boolean): ModelCollisionResult | 
   else selectAsset(asset.model);
   if (!automatic) {
     status.textContent = collision.optimized
-      ? `Built one smooth ${collision.triangles.length.toLocaleString()}-triangle collider from ${collision.sourceTriangles.toLocaleString()} visual triangles. Turn Edit Collision on to adjust it.`
+      ? `Built one welded detailed ${collision.triangles.length.toLocaleString()}-triangle collider from ${collision.sourceTriangles.toLocaleString()} visual triangles without bridging empty space. Turn Edit Collision on to adjust it.`
       : `Copied the exact model mesh: ${collision.triangles.length.toLocaleString()} collision triangles. Turn Edit Collision on to adjust it separately.`;
   }
   exportJson();
@@ -1431,7 +1432,7 @@ function buildModelCollision(model: THREE.Group): ModelCollisionBuild {
   if (sourceTriangles <= MAX_EXACT_COLLISION_TRIANGLES) {
     return { ...buildExactModelCollision(model, meshes), sourceTriangles, optimized: false };
   }
-  return { ...buildSmoothModelCollision(model, meshes), sourceTriangles, optimized: true };
+  return { ...buildWeldedModelCollision(model, meshes), sourceTriangles, optimized: true };
 }
 
 function buildExactModelCollision(model: THREE.Group, meshes = getModelMeshes(model)): Pick<ModelCollisionBuild, "localVertices" | "triangles"> {
@@ -1472,73 +1473,134 @@ function buildExactModelCollision(model: THREE.Group, meshes = getModelMeshes(mo
   return { localVertices: vertices, triangles };
 }
 
-function buildSmoothModelCollision(
+function buildWeldedModelCollision(
   model: THREE.Group,
   meshes: THREE.Mesh[]
 ): Pick<ModelCollisionBuild, "localVertices" | "triangles"> {
   model.updateMatrixWorld(true);
   const inverseRoot = model.matrixWorld.clone().invert();
-  const totalPositions = meshes.reduce((total, mesh) => total + (mesh.geometry.getAttribute("position")?.count ?? 0), 0);
-  const sampleStride = Math.max(1, Math.ceil(totalPositions / MAX_OPTIMIZED_COLLISION_POINTS));
-  const points: THREE.Vector3[] = [];
-  const pointKeys = new Set<string>();
+  const bounds = new THREE.Box3();
   const point = new THREE.Vector3();
-  let globalPositionIndex = 0;
-
   for (const mesh of meshes) {
     const positions = mesh.geometry.getAttribute("position");
     if (!positions?.count) continue;
     const toRoot = inverseRoot.clone().multiply(mesh.matrixWorld);
     for (let index = 0; index < positions.count; index += 1) {
-      const shouldSample = globalPositionIndex % sampleStride === 0;
-      globalPositionIndex += 1;
-      if (!shouldSample) continue;
       mesh.getVertexPosition(index, point);
       point.applyMatrix4(toRoot);
       if (![point.x, point.y, point.z].every(Number.isFinite)) continue;
-      const key = `${point.x.toFixed(4)},${point.y.toFixed(4)},${point.z.toFixed(4)}`;
-      if (pointKeys.has(key)) continue;
-      pointKeys.add(key);
-      points.push(point.clone());
+      bounds.expandByPoint(point);
     }
   }
-  if (points.length < 4) throw new Error("the model does not have enough valid points for collision");
+  if (bounds.isEmpty()) throw new Error("the model does not have enough valid points for collision");
 
-  let geometry: THREE.BufferGeometry;
-  try {
-    geometry = new ConvexGeometry(points);
-  } catch {
+  const size = bounds.getSize(new THREE.Vector3());
+  const largestDimension = Math.max(size.x, size.y, size.z);
+  if (!Number.isFinite(largestDimension) || largestDimension <= Number.EPSILON) {
     throw new Error("the model geometry is flat or invalid and a collision mesh could not be generated");
   }
-  try {
-    const positions = geometry.getAttribute("position");
-    const localVertices: [number, number, number][] = [];
-    const triangles: [number, number, number][] = [];
-    const vertexMap = new Map<string, number>();
-    for (let face = 0; face < Math.floor(positions.count / 3); face += 1) {
+
+  // Surface meshes scale approximately with resolution squared. Start near
+  // the desired triangle budget, then increase welding only when necessary.
+  let weldDistance = largestDimension / Math.max(48, Math.sqrt(MAX_OPTIMIZED_COLLISION_TRIANGLES * 2));
+  let result = buildClusteredModelCollision(model, meshes, inverseRoot, weldDistance);
+  for (let pass = 1;
+    pass < MAX_COLLISION_CLUSTER_PASSES && result.triangles.length > MAX_OPTIMIZED_COLLISION_TRIANGLES;
+    pass += 1) {
+    const reduction = Math.sqrt(result.triangles.length / MAX_OPTIMIZED_COLLISION_TRIANGLES);
+    weldDistance *= THREE.MathUtils.clamp(reduction * 1.08, 1.15, 2.5);
+    result = buildClusteredModelCollision(model, meshes, inverseRoot, weldDistance);
+  }
+  return result;
+}
+
+function buildClusteredModelCollision(
+  model: THREE.Group,
+  meshes: THREE.Mesh[],
+  inverseRoot: THREE.Matrix4,
+  weldDistance: number
+): Pick<ModelCollisionBuild, "localVertices" | "triangles"> {
+  model.updateMatrixWorld(true);
+  const localVertices: [number, number, number][] = [];
+  const triangles: [number, number, number][] = [];
+  const vertexMap = new Map<string, number>();
+  const triangleKeys = new Set<string>();
+  const point = new THREE.Vector3();
+
+  for (const mesh of meshes) {
+    if (mesh.userData.isCollisionMesh || !mesh.visible) continue;
+    const positions = mesh.geometry.getAttribute("position");
+    if (!positions) continue;
+    const index = mesh.geometry.index;
+    const faceCount = Math.floor((index?.count ?? positions.count) / 3);
+    const toRoot = inverseRoot.clone().multiply(mesh.matrixWorld);
+    for (let face = 0; face < faceCount; face += 1) {
       const triangle: number[] = [];
       for (let corner = 0; corner < 3; corner += 1) {
-        const index = face * 3 + corner;
-        const x = positions.getX(index);
-        const y = positions.getY(index);
-        const z = positions.getZ(index);
-        const key = `${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`;
+        const vertexIndex = index ? index.getX(face * 3 + corner) : face * 3 + corner;
+        mesh.getVertexPosition(vertexIndex, point);
+        point.applyMatrix4(toRoot);
+        if (![point.x, point.y, point.z].every(Number.isFinite)) continue;
+        const gridX = Math.round(point.x / weldDistance);
+        const gridY = Math.round(point.y / weldDistance);
+        const gridZ = Math.round(point.z / weldDistance);
+        const key = `${gridX},${gridY},${gridZ}`;
         let mergedIndex = vertexMap.get(key);
         if (mergedIndex === undefined) {
           mergedIndex = localVertices.length;
           vertexMap.set(key, mergedIndex);
-          localVertices.push([x, y, z]);
+          localVertices.push([point.x, point.y, point.z]);
         }
         triangle.push(mergedIndex);
       }
-      if (triangle[0] !== triangle[1] && triangle[1] !== triangle[2] && triangle[0] !== triangle[2]) {
-        triangles.push(triangle as [number, number, number]);
-      }
+      if (triangle.length !== 3 || triangle[0] === triangle[1]
+          || triangle[1] === triangle[2] || triangle[0] === triangle[2]) continue;
+      const candidate = triangle as [number, number, number];
+      if (collisionTriangleAreaSquared(localVertices, candidate) <= 1e-12) continue;
+      const triangleKey = [...candidate].sort((a, b) => a - b).join(",");
+      if (triangleKeys.has(triangleKey)) continue;
+      triangleKeys.add(triangleKey);
+      triangles.push(candidate);
     }
-    return { localVertices, triangles };
-  } finally {
-    geometry.dispose();
   }
+  return compactCollisionMesh(localVertices, triangles);
+}
+
+function collisionTriangleAreaSquared(
+  vertices: readonly (readonly [number, number, number])[],
+  triangle: readonly [number, number, number]
+): number {
+  const a = vertices[triangle[0]]!;
+  const b = vertices[triangle[1]]!;
+  const c = vertices[triangle[2]]!;
+  const abX = b[0] - a[0];
+  const abY = b[1] - a[1];
+  const abZ = b[2] - a[2];
+  const acX = c[0] - a[0];
+  const acY = c[1] - a[1];
+  const acZ = c[2] - a[2];
+  const crossX = abY * acZ - abZ * acY;
+  const crossY = abZ * acX - abX * acZ;
+  const crossZ = abX * acY - abY * acX;
+  return crossX * crossX + crossY * crossY + crossZ * crossZ;
+}
+
+function compactCollisionMesh(
+  vertices: [number, number, number][],
+  triangles: [number, number, number][]
+): Pick<ModelCollisionBuild, "localVertices" | "triangles"> {
+  const used = new Map<number, number>();
+  const localVertices: [number, number, number][] = [];
+  const compactTriangles = triangles.map((triangle) => triangle.map((oldIndex) => {
+    let newIndex = used.get(oldIndex);
+    if (newIndex === undefined) {
+      newIndex = localVertices.length;
+      used.set(oldIndex, newIndex);
+      localVertices.push(vertices[oldIndex]!);
+    }
+    return newIndex;
+  }) as [number, number, number]);
+  return { localVertices, triangles: compactTriangles };
 }
 
 function exportJson(): void {

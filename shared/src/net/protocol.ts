@@ -13,6 +13,8 @@ export const GAME = {
   resultsSeconds: 10,
   moveSpeed: 6.2,
   hunterSpeed: 6.65,
+  hunterVisualScale: 1.9,
+  hunterCameraScale: 1.25,
   sprintSpeed: 10.2,
   hunterSprintSpeed: 10.6,
   crouchSpeed: 3.2,

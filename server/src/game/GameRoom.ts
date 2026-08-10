@@ -411,7 +411,11 @@ export class GameRoom {
       y: Math.sin(pitch),
       z: -Math.cos(aimYaw) * horizontal
     };
-    const origin = { x: hunter.position.x, y: hunter.position.y + 1.28, z: hunter.position.z };
+    const origin = {
+      x: hunter.position.x,
+      y: hunter.position.y + 1.28 * GAME.hunterCameraScale,
+      z: hunter.position.z
+    };
     const blockedAt = firstWorldHit(origin, direction, GAME.shotgunRange);
     let closest: RoomPlayer | undefined;
     let closestDistance = blockedAt;

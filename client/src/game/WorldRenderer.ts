@@ -53,6 +53,9 @@ interface Avatar {
   bodyPitchApplied?: number;
   bodyPitchBones?: Array<{ bone: THREE.Object3D; weight: number }>;
   locomotionArmBones?: Partial<Record<LocomotionArmBoneName, THREE.Object3D>>;
+  rightUpperArmBone?: THREE.Object3D;
+  rightLowerArmBone?: THREE.Object3D;
+  rightHandBone?: THREE.Object3D;
   mixer?: THREE.AnimationMixer;
   actions?: Map<string, THREE.AnimationAction>;
   activeAction?: THREE.AnimationAction;
@@ -102,6 +105,10 @@ export class WorldRenderer {
   private readonly beforeRenderTasks = new Set<() => void>();
   private readonly attachedVisualTarget = new THREE.Vector3();
   private readonly attachedVisualOffset = new THREE.Vector3();
+  private readonly hunterArmDirection = new THREE.Vector3();
+  private readonly hunterArmLocalDirection = new THREE.Vector3();
+  private readonly hunterArmRestDirection = new THREE.Vector3();
+  private readonly hunterArmQuaternion = new THREE.Quaternion();
   private selfId = "";
   private roundPhase: ServerSnapshot["round"]["phase"] = "waiting";
   private input?: InputController;
@@ -297,6 +304,7 @@ export class WorldRenderer {
       avatar.snapshotReceivedAt = performance.now();
       avatar.targetYaw = player.yaw;
       avatar.state = player;
+      avatar.root.scale.setScalar(player.role === "hunter" ? GAME.hunterVisualScale : 1);
       if (avatar.baseColor !== player.color) {
         avatar.baseColor = player.color;
         this.redrawPaint(avatar);
@@ -970,7 +978,14 @@ export class WorldRenderer {
     let characterMesh: THREE.Mesh | undefined;
     const bodyPitchBones: Array<{ bone: THREE.Object3D; weight: number }> = [];
     const locomotionArmBones: Partial<Record<LocomotionArmBoneName, THREE.Object3D>> = {};
+    let rightUpperArmBone: THREE.Object3D | undefined;
+    let rightLowerArmBone: THREE.Object3D | undefined;
+    let rightHandBone: THREE.Object3D | undefined;
     visual.traverse((child) => {
+      const normalizedName = child.name.replace(/[^a-z0-9]/gi, "").toLowerCase();
+      if (normalizedName === "upperarmr") rightUpperArmBone = child;
+      if (normalizedName === "lowerarmr") rightLowerArmBone = child;
+      if (normalizedName === "handr") rightHandBone = child;
       const pitchWeight = BODY_PITCH_BONES.get(child.name);
       if (pitchWeight !== undefined) bodyPitchBones.push({ bone: child, weight: pitchWeight });
       if (LOCOMOTION_ARM_POSE.has(child.name as LocomotionArmBoneName)) locomotionArmBones[child.name as LocomotionArmBoneName] = child;
@@ -1000,8 +1015,8 @@ export class WorldRenderer {
     root.add(hunterMark);
 
     const { weapon, muzzle } = createShotgun(this.shotgunTemplate);
-    weapon.position.set(0.29, 1.3, -0.38);
-    weapon.rotation.set(-1.16, 0.08, -0.12);
+    weapon.position.set(0.38, 1.42, -0.62);
+    weapon.rotation.set(0, 0, 0);
     weapon.visible = state.role === "hunter" && state.alive;
     root.add(weapon);
 
@@ -1032,6 +1047,9 @@ export class WorldRenderer {
       bodyPitchApplied: 0,
       bodyPitchBones,
       locomotionArmBones,
+      rightUpperArmBone,
+      rightLowerArmBone,
+      rightHandBone,
       mixer,
       actions,
       hunterMark,
@@ -1099,8 +1117,8 @@ export class WorldRenderer {
     root.add(hunterMark);
 
     const { weapon, muzzle } = createShotgun(this.shotgunTemplate);
-    weapon.position.set(0.29, 1.3, -0.38);
-    weapon.rotation.set(-1.16, 0.08, -0.12);
+    weapon.position.set(0.38, 1.42, -0.62);
+    weapon.rotation.set(0, 0, 0);
     weapon.visible = state.role === "hunter" && state.alive;
     root.add(weapon);
 
@@ -1325,6 +1343,31 @@ export class WorldRenderer {
     }
   }
 
+  private applyHunterPointingArm(avatar: Avatar): void {
+    if (avatar.state.role !== "hunter" || avatar.procedural) return;
+    const upperArm = avatar.rightUpperArmBone;
+    const lowerArm = avatar.rightLowerArmBone;
+    const hand = avatar.rightHandBone;
+    if (!upperArm || !lowerArm || !hand) return;
+
+    avatar.root.getWorldQuaternion(this.hunterArmQuaternion);
+    this.hunterArmDirection
+      .set(0.08, -0.08, -1)
+      .applyQuaternion(this.hunterArmQuaternion)
+      .normalize();
+    this.pointBoneAtWorldDirection(upperArm, lowerArm, this.hunterArmDirection);
+    this.pointBoneAtWorldDirection(lowerArm, hand, this.hunterArmDirection);
+  }
+
+  private pointBoneAtWorldDirection(bone: THREE.Object3D, child: THREE.Object3D, worldDirection: THREE.Vector3): void {
+    if (!bone.parent || child.position.lengthSq() <= Number.EPSILON) return;
+    bone.parent.getWorldQuaternion(this.hunterArmQuaternion).invert();
+    this.hunterArmLocalDirection.copy(worldDirection).applyQuaternion(this.hunterArmQuaternion).normalize();
+    this.hunterArmRestDirection.copy(child.position).normalize();
+    bone.quaternion.setFromUnitVectors(this.hunterArmRestDirection, this.hunterArmLocalDirection);
+    bone.updateWorldMatrix(true, true);
+  }
+
   private animate = (): void => {
     if (!this.running) return;
     requestAnimationFrame(this.animate);
@@ -1366,9 +1409,13 @@ export class WorldRenderer {
         avatar.leftLeg.rotation.x = stride;
         avatar.rightLeg.rotation.x = -stride;
         if (avatar.state.role === "hunter") {
-          avatar.leftArm.rotation.set(-0.58, 0, -0.32);
-          avatar.rightArm.rotation.set(-0.4, 0, 0.78);
+          avatar.leftArm.position.set(-0.63, 1.15, 0);
+          avatar.rightArm.position.set(0.48, 1.42, -0.46);
+          avatar.leftArm.rotation.set(-stride * 0.2, 0, -0.08);
+          avatar.rightArm.rotation.set(-Math.PI / 2, 0, 0);
         } else {
+          avatar.leftArm.position.set(-0.63, 1.15, 0);
+          avatar.rightArm.position.set(0.63, 1.15, 0);
           avatar.leftArm.rotation.set(-stride * 0.65, 0, 0);
           avatar.rightArm.rotation.set(stride * 0.65, 0, 0);
         }
@@ -1395,6 +1442,7 @@ export class WorldRenderer {
         avatar.mixer?.update(dt);
         this.applyLocomotionArmPose(avatar, running, displayPose, straightSprint);
       }
+      this.applyHunterPointingArm(avatar);
       this.applyAvatarBodyPitch(avatar);
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
       const recoilRemaining = Math.max(0, avatar.recoilUntil - renderTime);
@@ -1416,7 +1464,8 @@ export class WorldRenderer {
       const pitch = (this.input?.pitch ?? -0.2) + (this.input?.cameraPitchOffset ?? 0) + (this.paintView ? this.paintOrbitPitch : 0);
       this.cameraDistance = THREE.MathUtils.lerp(this.cameraDistance, this.targetCameraDistance, 1 - Math.exp(-CAMERA_ZOOM_RESPONSE * dt));
       const distance = this.cameraDistance;
-      const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose], 0));
+      const roleScale = focus.state.role === "hunter" ? GAME.hunterCameraScale : 1;
+      const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose] * roleScale, 0));
       if (!this.cameraRigInitialized) {
         this.cameraFocus.copy(target);
         this.cameraOrbitYaw = yaw;
@@ -1886,7 +1935,7 @@ type LocomotionArmBoneName = "upper_armR" | "lower_armR" | "upper_armL" | "lower
 const LOCOMOTION_ARM_POSE_BLEND = 0.72;
 const WALK_CLIP = "ChameleonMan|Walking";
 const RUN_CLIP = "ChameleonMan|Running";
-const HUNTER_IDLE_CLIP = "ChameleonMan|Pose_HandOnHip";
+const HUNTER_IDLE_CLIP = "ChameleonMan|Pose_Straight";
 const HUNTER_WALK_CLIP = "ChameleonMan|WalkingWithShotgun";
 const HUNTER_RUN_CLIP = "ChameleonMan|RunningWithShotgun";
 const HUNTER_POSE_BONES = ["Bone.001", "shoulder.R", "upper_arm.R", "lower_arm.R", "hand.R", "shoulder.L", "upper_arm.L", "lower_arm.L", "hand.L"] as const;

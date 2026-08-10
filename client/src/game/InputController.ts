@@ -13,7 +13,6 @@ export class InputController {
   onTogglePoses?: () => void;
   onWhistle?: () => void;
   onTogglePaint?: () => void;
-  onEyedropper?: () => void;
   private paintMode = false;
   private mouseMode?: "camera" | "body";
   private mouseButton?: 0 | 2;
@@ -28,7 +27,6 @@ export class InputController {
       if (event.code === "KeyC" && !event.repeat) this.onPose?.();
       if (event.code === "KeyR" && !event.repeat) this.onTogglePoses?.();
       if (event.code === "KeyF" && !event.repeat) this.onTogglePaint?.();
-      if (event.code === "KeyE" && !event.repeat) this.onEyedropper?.();
       if (event.code === "KeyQ" && !event.repeat) this.onWhistle?.();
       if (event.code === "KeyV" && !event.repeat) this.faceCamera();
       if (event.code === "Escape") this.cancelMouseGesture();

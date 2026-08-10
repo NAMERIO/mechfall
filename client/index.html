@@ -83,7 +83,6 @@
 
       <section id="paint-panel" class="paint-panel panel-lite">
         <div class="paint-readout"><i id="paint-swatch"></i><span><small>ACTIVE COAT</small><strong id="paint-hex">#F5F0DF</strong></span></div>
-        <label><span>CUSTOM</span><input id="color-input" type="color" value="#f5f0df" /></label>
         <button id="paint-button"><kbd>F</kbd><span>PAINT</span></button>
         <button id="pose-button"><kbd>R</kbd><span id="pose-label">POSES</span></button>
         <button id="whistle-button"><kbd>Q</kbd><span>WHISTLE</span></button>
@@ -93,20 +92,40 @@
         <header>
           <span>CHROMA STUDIO</span>
           <strong>PAINT YOUR DISGUISE</strong>
-          <small>Drag to paint · right-drag to orbit · press E to sample the environment</small>
+          <small>Drag to paint · right-drag to orbit · use the pipette to pick a surface color</small>
         </header>
         <div id="brush-cursor" class="brush-cursor"></div>
         <div class="paint-toolbar panel-lite">
           <div class="palette" aria-label="Quick paint colors">
-            <button data-paint-color="#d9564a" style="--swatch:#d9564a"></button>
-            <button data-paint-color="#e7b844" style="--swatch:#e7b844"></button>
-            <button data-paint-color="#4a9d91" style="--swatch:#4a9d91"></button>
-            <button data-paint-color="#4778a8" style="--swatch:#4778a8"></button>
-            <button data-paint-color="#8067a8" style="--swatch:#8067a8"></button>
-            <button data-paint-color="#c8b899" style="--swatch:#c8b899"></button>
+            <button data-paint-color="#f5f0df" style="--swatch:#f5f0df" aria-label="Porcelain"></button>
+            <button data-paint-color="#d7d9d4" style="--swatch:#d7d9d4" aria-label="Mist"></button>
+            <button data-paint-color="#748580" style="--swatch:#748580" aria-label="Steel"></button>
+            <button data-paint-color="#152127" style="--swatch:#152127" aria-label="Ink"></button>
+            <button data-paint-color="#d9564a" style="--swatch:#d9564a" aria-label="Red"></button>
+            <button data-paint-color="#f07b51" style="--swatch:#f07b51" aria-label="Orange"></button>
+            <button data-paint-color="#e7b844" style="--swatch:#e7b844" aria-label="Gold"></button>
+            <button data-paint-color="#f4d24f" style="--swatch:#f4d24f" aria-label="Yellow"></button>
+            <button data-paint-color="#b9cf5a" style="--swatch:#b9cf5a" aria-label="Lime"></button>
+            <button data-paint-color="#64b667" style="--swatch:#64b667" aria-label="Green"></button>
+            <button data-paint-color="#57b9a9" style="--swatch:#57b9a9" aria-label="Teal"></button>
+            <button data-paint-color="#42aebc" style="--swatch:#42aebc" aria-label="Cyan"></button>
+            <button data-paint-color="#4778a8" style="--swatch:#4778a8" aria-label="Blue"></button>
+            <button data-paint-color="#5866c6" style="--swatch:#5866c6" aria-label="Indigo"></button>
+            <button data-paint-color="#8067a8" style="--swatch:#8067a8" aria-label="Violet"></button>
+            <button data-paint-color="#b06fbb" style="--swatch:#b06fbb" aria-label="Purple"></button>
+            <button data-paint-color="#dc6e9c" style="--swatch:#dc6e9c" aria-label="Pink"></button>
+            <button data-paint-color="#e9a6a6" style="--swatch:#e9a6a6" aria-label="Blush"></button>
+            <button data-paint-color="#c8b899" style="--swatch:#c8b899" aria-label="Sand"></button>
+            <button data-paint-color="#9a6d49" style="--swatch:#9a6d49" aria-label="Ochre"></button>
+            <button data-paint-color="#70483c" style="--swatch:#70483c" aria-label="Clay"></button>
+            <button data-paint-color="#3c4a4c" style="--swatch:#3c4a4c" aria-label="Slate"></button>
+          </div>
+          <div class="paint-color-picker" aria-label="Custom paint color">
+            <span>CUSTOM COAT</span>
+            <button id="color-wheel-button" class="color-wheel" type="button" aria-label="Choose a custom paint color"><i id="color-wheel-marker"></i></button>
+            <div class="color-picker-readout"><div class="paint-hex-row"><strong id="paint-color-value">#F5F0DF</strong><button id="sample-color-button" type="button" aria-label="Use the pipette to pick a surface color" title="Pick a surface color"><img src="/pipette.svg" alt="" aria-hidden="true" /></button></div><input id="color-input" type="color" value="#f5f0df" aria-label="Open system color picker" /></div>
           </div>
           <label class="brush-size"><span>BRUSH SIZE</span><input id="brush-size" type="range" min="2" max="18" value="7" /></label>
-          <button id="eyedropper-button" class="tool-button"><b>⌾</b><span>EYEDROPPER</span><small>PRESS E</small></button>
           <button id="clear-paint-button" class="tool-button"><b>↺</b><span>CLEAR</span><small>START OVER</small></button>
           <button id="done-paint-button" class="done-paint-button">DONE PAINTING <kbd>F</kbd></button>
         </div>

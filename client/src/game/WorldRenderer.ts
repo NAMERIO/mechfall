@@ -275,12 +275,37 @@ export class WorldRenderer {
 
   sampleScreenColor(clientX: number, clientY: number): string | undefined {
     this.setRayFromScreen(clientX, clientY);
-    const hits = this.raycaster.intersectObjects(this.sampleSurfaces, false);
+    // Raycast every visible mesh instead of just the large level blocks. This
+    // makes the pipette pick the exact mesh the player clicked (leaf, pipe,
+    // banner, painted player, etc.), while returning its unlit material color.
+    const hits = this.raycaster.intersectObjects(this.scene.children, true);
     for (const hit of hits) {
-      const color = hit.object.userData.sampleColor as string | undefined;
+      if (!isVisibleInScene(hit.object)) continue;
+      const color = this.sampleHitColor(hit);
       if (color) return color;
     }
     return undefined;
+  }
+
+  private sampleHitColor(hit: THREE.Intersection<THREE.Object3D>): string | undefined {
+    if (!(hit.object instanceof THREE.Mesh)) return undefined;
+
+    for (const avatar of this.avatars.values()) {
+      for (const surface of avatar.paintSurfaces.values()) {
+        if (surface.mesh !== hit.object || !hit.uv) continue;
+        const x = THREE.MathUtils.clamp(Math.floor(hit.uv.x * surface.canvas.width), 0, surface.canvas.width - 1);
+        const y = THREE.MathUtils.clamp(Math.floor((1 - hit.uv.y) * surface.canvas.height), 0, surface.canvas.height - 1);
+        const pixel = surface.context.getImageData(x, y, 1, 1).data;
+        if (pixel[3] === 0 && surface.transparentLayer) return avatar.baseColor;
+        return rgbToHex(pixel[0]!, pixel[1]!, pixel[2]!);
+      }
+    }
+
+    const material = getHitMaterial(hit.object, hit.faceIndex);
+    const materialColor = (material as THREE.Material & { color?: THREE.Color } | undefined)?.color;
+    // This is the authored material color, not a rendered screen pixel, so
+    // lighting and shadows cannot make a picked coat darker or lighter.
+    return materialColor ? `#${materialColor.getHexString(THREE.SRGBColorSpace)}` : undefined;
   }
 
   paintAtScreen(clientX: number, clientY: number, color: string, size: number): PaintStroke | undefined {
@@ -1233,6 +1258,27 @@ function disposeObject(object: THREE.Object3D): void {
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     for (const material of materials) material.dispose();
   });
+}
+
+function getHitMaterial(mesh: THREE.Mesh, faceIndex: number | null | undefined): THREE.Material | undefined {
+  if (!Array.isArray(mesh.material)) return mesh.material;
+  if (faceIndex == null) return mesh.material[0];
+  const vertexOffset = faceIndex * 3;
+  const group = mesh.geometry.groups.find(({ start, count }) => vertexOffset >= start && vertexOffset < start + count);
+  return mesh.material[group?.materialIndex ?? 0];
+}
+
+function isVisibleInScene(object: THREE.Object3D): boolean {
+  let current: THREE.Object3D | null = object;
+  while (current) {
+    if (!current.visible) return false;
+    current = current.parent;
+  }
+  return true;
+}
+
+function rgbToHex(red: number, green: number, blue: number): string {
+  return `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /**

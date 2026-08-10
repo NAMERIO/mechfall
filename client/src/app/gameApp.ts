@@ -35,6 +35,10 @@ const paintPanel = element<HTMLElement>("#paint-panel");
 const paintSwatch = element<HTMLElement>("#paint-swatch");
 const paintHex = element<HTMLElement>("#paint-hex");
 const colorInput = element<HTMLInputElement>("#color-input");
+const colorWheel = element<HTMLButtonElement>("#color-wheel-button");
+const colorWheelMarker = element<HTMLElement>("#color-wheel-marker");
+const paintColorValue = element<HTMLElement>("#paint-color-value");
+const sampleColorButton = element<HTMLButtonElement>("#sample-color-button");
 const paintButton = element<HTMLButtonElement>("#paint-button");
 const poseButton = element<HTMLButtonElement>("#pose-button");
 const poseLabel = element<HTMLElement>("#pose-label");
@@ -57,7 +61,6 @@ const score = element<HTMLElement>("#score");
 const paintModeUi = element<HTMLElement>("#paint-mode-ui");
 const brushCursor = element<HTMLElement>("#brush-cursor");
 const brushSizeInput = element<HTMLInputElement>("#brush-size");
-const eyedropperButton = element<HTMLButtonElement>("#eyedropper-button");
 const clearPaintButton = element<HTMLButtonElement>("#clear-paint-button");
 const donePaintButton = element<HTMLButtonElement>("#done-paint-button");
 
@@ -75,6 +78,7 @@ let phaseTimeout = 0;
 let inputTimer = 0;
 let toastTimeout = 0;
 let paintMode = false;
+let colorPicking = false;
 let poseMenuOpen = false;
 let painting = false;
 let orbitingPaintCamera = false;
@@ -92,6 +96,7 @@ let pointerY = window.innerHeight / 2;
 stripLegacyGameIdFromUrl();
 nameInput.value = localStorage.getItem("mechfall-name") ?? `Drifter ${Math.floor(Math.random() * 90 + 10)}`;
 setBrushSize(brushSize);
+selectPaintColor(paintColor);
 
 void refreshLobbies();
 const lobbyPollTimer = window.setInterval(() => void refreshLobbies(), 5_000);
@@ -108,6 +113,15 @@ document.addEventListener("visibilitychange", () => {
 gameCode.closest(".room-chip")?.addEventListener("click", () => void copyGameId());
 startGameButton.addEventListener("click", requestRoundStart);
 colorInput.addEventListener("input", () => selectPaintColor(colorInput.value));
+colorWheel.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  colorWheel.setPointerCapture(event.pointerId);
+  selectColorFromWheel(event);
+});
+colorWheel.addEventListener("pointermove", (event) => {
+  if (event.buttons & 1) selectColorFromWheel(event);
+});
+sampleColorButton.addEventListener("click", () => setColorPicking(!colorPicking));
 paintButton.addEventListener("click", togglePaintMode);
 poseButton.addEventListener("click", togglePoseMenu);
 closePoseMenuButton.addEventListener("click", togglePoseMenu);
@@ -117,7 +131,6 @@ for (const poseChoice of document.querySelectorAll<HTMLButtonElement>("[data-pos
 whistleButton.addEventListener("click", whistle);
 donePaintButton.addEventListener("click", togglePaintMode);
 clearPaintButton.addEventListener("click", clearPaint);
-eyedropperButton.addEventListener("click", samplePaintColor);
 brushSizeInput.addEventListener("input", () => setBrushSize(Number(brushSizeInput.value) / 100));
 for (const swatch of document.querySelectorAll<HTMLButtonElement>("[data-paint-color]")) {
   swatch.addEventListener("click", () => selectPaintColor(swatch.dataset.paintColor ?? paintColor));
@@ -126,7 +139,6 @@ input.onPose = cyclePose;
 input.onTogglePoses = togglePoseMenu;
 input.onWhistle = whistle;
 input.onTogglePaint = togglePaintMode;
-input.onEyedropper = samplePaintColor;
 input.onAction = () => {
   const self = world.getSelf();
   if (!self?.alive) return;
@@ -155,6 +167,10 @@ world.canvas.addEventListener("pointermove", (event) => {
 world.canvas.addEventListener("pointerdown", (event) => {
   if (!paintMode) return;
   event.preventDefault();
+  if (colorPicking && event.button === 0) {
+    samplePaintColor(event.clientX, event.clientY);
+    return;
+  }
   if (event.button === 2 || event.button === 1) {
     orbitingPaintCamera = true;
     return;
@@ -485,7 +501,80 @@ function selectPaintColor(color: string): void {
   paintColor = color.toLowerCase();
   paintSwatch.style.backgroundColor = color;
   paintHex.textContent = color.toUpperCase();
+  paintColorValue.textContent = color.toUpperCase();
   colorInput.value = color;
+  updateColorWheelMarker(color);
+  for (const swatch of document.querySelectorAll<HTMLButtonElement>("[data-paint-color]")) {
+    swatch.classList.toggle("active", swatch.dataset.paintColor?.toLowerCase() === paintColor);
+  }
+}
+
+function selectColorFromWheel(event: PointerEvent): void {
+  const bounds = colorWheel.getBoundingClientRect();
+  const radius = bounds.width / 2;
+  const x = (event.clientX - bounds.left - radius) / radius;
+  const y = (event.clientY - bounds.top - radius) / radius;
+  const saturation = Math.min(1, Math.hypot(x, y));
+  const hue = (Math.atan2(y, x) * 180 / Math.PI + 90 + 360) % 360;
+  selectPaintColor(hslToHex(hue, saturation * 100, 50));
+}
+
+function updateColorWheelMarker(color: string): void {
+  const red = Number.parseInt(color.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(color.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(color.slice(5, 7), 16) / 255;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const delta = max - min;
+  const saturation = max === 0 ? 0 : delta / max;
+  let hue = 0;
+  if (delta !== 0) {
+    if (max === red) hue = 60 * (((green - blue) / delta) % 6);
+    else if (max === green) hue = 60 * ((blue - red) / delta + 2);
+    else hue = 60 * ((red - green) / delta + 4);
+  }
+  if (hue < 0) hue += 360;
+  const angle = (hue - 90) * Math.PI / 180;
+  const radius = saturation * 38;
+  colorWheelMarker.style.setProperty("--wheel-x", `${50 + Math.cos(angle) * radius}%`);
+  colorWheelMarker.style.setProperty("--wheel-y", `${50 + Math.sin(angle) * radius}%`);
+}
+
+function hslToHex(hue: number, saturation: number, lightness: number): string {
+  const saturationValue = saturation / 100;
+  const lightnessValue = lightness / 100;
+  const chroma = (1 - Math.abs(2 * lightnessValue - 1)) * saturationValue;
+  const segment = hue / 60;
+  const second = chroma * (1 - Math.abs(segment % 2 - 1));
+  const match = lightnessValue - chroma / 2;
+  const [red, green, blue] = segment < 1 ? [chroma, second, 0]
+    : segment < 2 ? [second, chroma, 0]
+    : segment < 3 ? [0, chroma, second]
+    : segment < 4 ? [0, second, chroma]
+    : segment < 5 ? [second, 0, chroma]
+    : [chroma, 0, second];
+  return `#${[red, green, blue].map((channel) => Math.round((channel + match) * 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function setColorPicking(active: boolean): void {
+  colorPicking = Boolean(active && paintMode);
+  sampleColorButton.classList.toggle("active", colorPicking);
+  brushCursor.classList.toggle("picking", colorPicking);
+  world.canvas.classList.toggle("pipette-cursor", colorPicking);
+  if (colorPicking) showToast("PIPETTE READY · CLICK A SURFACE TO PICK ITS COLOR");
+}
+
+function samplePaintColor(clientX: number, clientY: number): void {
+  if (!paintMode) return;
+  const sampled = world.sampleScreenColor(clientX, clientY);
+  if (!sampled) {
+    showToast("POINT AT A FACTORY SURFACE TO PICK ITS COAT");
+    return;
+  }
+  selectPaintColor(sampled);
+  setColorPicking(false);
+  showToast(`SURFACE COLOR · ${sampled.toUpperCase()}`);
+  playTone(560, 0.07);
 }
 
 function togglePaintMode(): void {
@@ -496,6 +585,7 @@ function setPaintMode(active: boolean): void {
   const self = world.getSelf();
   if (active && poseMenuOpen) setPoseMenu(false);
   paintMode = Boolean(active && self?.role === "hider" && self.alive);
+  setColorPicking(false);
   painting = false;
   lastPaintPoint = undefined;
   orbitingPaintCamera = false;
@@ -573,18 +663,6 @@ function flushPaintStrokes(): void {
   const strokes = pendingPaintStrokes.splice(0, MAX_PAINT_STROKES_PER_PACKET);
   if (strokes.length > 0) connection?.send({ type: "paintStrokes", strokes });
   if (pendingPaintStrokes.length > 0) schedulePaintFlush();
-}
-
-function samplePaintColor(): void {
-  if (!paintMode) return;
-  const sampled = world.sampleScreenColor(pointerX, pointerY);
-  if (!sampled) {
-    showToast("POINT AT A FACTORY SURFACE TO SAMPLE IT");
-    return;
-  }
-  selectPaintColor(sampled);
-  showToast(`EYEDROPPER · ${sampled.toUpperCase()}`);
-  playTone(560, 0.07);
 }
 
 function clearPaint(): void {

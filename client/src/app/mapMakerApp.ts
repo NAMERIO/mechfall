@@ -21,9 +21,14 @@ const KIND_OPTIONS: BoxKind[] = ["wall", "crate", "table", "column", "planter"];
 const PLAYER_RADIUS = 0.48;
 const PLAYER_HEIGHT = 2.15;
 const MOVE_SPEED = 6;
+const SELECTED_MOVE_SPEED = 7;
+const SELECTED_MOVE_FAST_MULTIPLIER = 3;
+const SELECTED_MOVE_VERTICAL_SPEED = 4;
 const DEFAULT_FLOOR_COLOR = "#2b3838";
 const DEFAULT_BORDER_COLOR = "#de704e";
 const FLOOR_SNAP_DISTANCE = 0.45;
+const ASSET_SCALE_STEP = 0.1;
+const MIN_ASSET_SCALE = 0.02;
 const ROTATION_SNAP_DEGREES = 45;
 const ROTATION_SNAP_RADIANS = THREE.MathUtils.degToRad(ROTATION_SNAP_DEGREES);
 const BORDER_WALL_IDS = new Set(["north", "south", "west", "east"]);
@@ -59,7 +64,14 @@ document.body.innerHTML = `
           <button data-mm-yaw-set="45" type="button">DIAGONAL</button>
           <button data-mm-yaw-step="45" type="button">+45°</button>
         </div>
-        <small>Rotate snaps by 45°. Hold Shift for free rotate or free floor movement.</small>
+        <label>SCALE CLIP</label>
+        <label class="mapmaker-check"><input id="mm-uniform-scale" type="checkbox" checked /> UNIFORM SCALE</label>
+        <div class="mapmaker-scale-tools">
+          <button data-mm-scale-step="-1" type="button">SMALLER</button>
+          <button id="mm-scale-reset" type="button">RESET</button>
+          <button data-mm-scale-step="1" type="button">BIGGER</button>
+        </div>
+        <small>Uniform scale keeps width, height, and depth equal so props do not stretch weird.</small>
       </section>
       <section class="mapmaker-world">
         <label>WORLD SIZE <input id="mm-world-size" type="number" min="8" max="120" step="1" value="${WORLD_SIZE}" /></label>
@@ -77,7 +89,7 @@ document.body.innerHTML = `
       </section>
       <section class="mapmaker-test">
         <button id="mm-test-toggle" type="button">TEST COLLISION: OFF</button>
-        <small>WASD moves the test player. Red = blocked.</small>
+        <small>When test is off, WASD moves selected items. Q/E moves up/down. Red = blocked.</small>
       </section>
       <section>
         <label>IMPORT EXPORTED JSON</label>
@@ -89,7 +101,7 @@ document.body.innerHTML = `
     <section class="mapmaker-view">
       <div id="mm-canvas-host"></div>
       <div class="mapmaker-help">
-        <b>Mouse</b> orbit / select boxes or models · <b>Gizmo</b> move / rotate / scale · <b>Rotate</b> snaps 45° · <b>Shift</b> free move/rotate
+        <b>Mouse</b> orbit / select boxes or models · <b>WASD</b> move selected · <b>Q/E</b> up/down · <b>Scale</b> uniform lock
       </div>
     </section>
 
@@ -148,6 +160,9 @@ const worldInputs = {
   floorColor: element<HTMLInputElement>("#mm-floor-color"),
   borderColor: element<HTMLInputElement>("#mm-border-color")
 };
+const scaleInputs = {
+  uniform: element<HTMLInputElement>("#mm-uniform-scale")
+};
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#10191e");
@@ -182,6 +197,7 @@ transform.addEventListener("objectChange", () => {
   if (selectedAsset) {
     if (transformMode === "translate") snapAssetToFloor(selectedAsset);
     if (transformMode === "rotate" && !isIgnoringFloorSnap()) snapObjectRotation(selectedAsset);
+    if (transformMode === "scale") applyUniformAssetScale(selectedAsset);
     selectedTitle.textContent = `ASSET: ${selectedAsset.name || "MODEL"}`;
     exportJson();
   }
@@ -236,6 +252,14 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-yaw-
 }
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-yaw-step]")) {
   button.addEventListener("click", () => stepSelectedYaw(Number(button.dataset.mmYawStep ?? 0)));
+}
+scaleInputs.uniform.addEventListener("change", () => {
+  if (!selectedAsset) return;
+  if (scaleInputs.uniform.checked) applyUniformAssetScale(selectedAsset, true);
+});
+element<HTMLButtonElement>("#mm-scale-reset").addEventListener("click", resetSelectedAssetScale);
+for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-scale-step]")) {
+  button.addEventListener("click", () => stepSelectedAssetScale(Number(button.dataset.mmScaleStep ?? 0)));
 }
 element<HTMLButtonElement>("#mm-apply-world").addEventListener("click", applyWorldSettings);
 element<HTMLButtonElement>("#mm-rebuild-border").addEventListener("click", rebuildBorderWalls);
@@ -321,6 +345,7 @@ function setTransformMode(mode: TransformMode): void {
   if (!["translate", "rotate", "scale"].includes(mode)) return;
   transformMode = mode;
   transform.setMode(mode);
+  if (mode === "scale" && selectedAsset) setUniformScaleReference(selectedAsset);
   updateTransformSnapping();
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-transform-mode]")) {
     button.classList.toggle("active", button.dataset.mmTransformMode === mode);
@@ -425,6 +450,73 @@ function updateTransformSnapping(): void {
 
 function getRotatableTarget(): THREE.Object3D | undefined {
   return selectedAsset;
+}
+
+function getScalableTarget(): THREE.Object3D | undefined {
+  return selectedAsset;
+}
+
+function stepSelectedAssetScale(direction: number): void {
+  const target = getScalableTarget();
+  if (!target) {
+    status.textContent = "Select an imported asset first to scale it.";
+    return;
+  }
+  const current = getUniformScaleValue(target);
+  const multiplier = Math.max(MIN_ASSET_SCALE, 1 + direction * ASSET_SCALE_STEP);
+  setUniformAssetScale(target, current * multiplier);
+  status.textContent = `Scaled asset ${direction > 0 ? "bigger" : "smaller"} uniformly.`;
+  exportJson();
+}
+
+function resetSelectedAssetScale(): void {
+  const target = getScalableTarget();
+  if (!target) {
+    status.textContent = "Select an imported asset first to reset its scale.";
+    return;
+  }
+  setUniformAssetScale(target, getDefaultUniformScale(target));
+  status.textContent = "Reset asset scale to its imported size.";
+  exportJson();
+}
+
+function applyUniformAssetScale(asset: THREE.Object3D, forceCurrent = false): void {
+  if (!scaleInputs.uniform.checked) {
+    setUniformScaleReference(asset);
+    return;
+  }
+  const previous = getUniformScaleReference(asset);
+  const current = [asset.scale.x, asset.scale.y, asset.scale.z];
+  let next = forceCurrent ? getUniformScaleValue(asset) : current[0] ?? previous;
+  if (!forceCurrent) {
+    for (const value of current) {
+      if (Math.abs(value - previous) > Math.abs(next - previous)) next = value;
+    }
+  }
+  setUniformAssetScale(asset, next);
+}
+
+function setUniformAssetScale(asset: THREE.Object3D, value: number): void {
+  const safeValue = Math.max(MIN_ASSET_SCALE, Math.abs(value));
+  asset.scale.setScalar(safeValue);
+  asset.userData.uniformScaleReference = safeValue;
+  asset.updateMatrixWorld(true);
+}
+
+function setUniformScaleReference(asset: THREE.Object3D): void {
+  asset.userData.uniformScaleReference = getUniformScaleValue(asset);
+}
+
+function getUniformScaleReference(asset: THREE.Object3D): number {
+  return typeof asset.userData.uniformScaleReference === "number" ? asset.userData.uniformScaleReference : getUniformScaleValue(asset);
+}
+
+function getUniformScaleValue(asset: THREE.Object3D): number {
+  return Math.max(MIN_ASSET_SCALE, (Math.abs(asset.scale.x) + Math.abs(asset.scale.y) + Math.abs(asset.scale.z)) / 3);
+}
+
+function getDefaultUniformScale(asset: THREE.Object3D): number {
+  return typeof asset.userData.defaultUniformScale === "number" ? asset.userData.defaultUniformScale : 1;
 }
 
 function snapSelectedRotation(): void {
@@ -566,6 +658,7 @@ function selectBox(box: EditableBox | undefined): void {
 function selectAsset(asset: THREE.Object3D): void {
   selected = undefined;
   selectedAsset = asset;
+  setUniformScaleReference(asset);
   transform.detach();
   for (const item of boxes) syncBoxMesh(item);
   transform.attach(asset);
@@ -690,6 +783,8 @@ function normalizeImportedModel(model: THREE.Group, name: string): THREE.Group {
   const scale = Math.min(1, 30 / Math.max(size.x, size.y, size.z, 0.001));
   model.position.sub(center);
   root.scale.setScalar(scale);
+  root.userData.defaultUniformScale = scale;
+  root.userData.uniformScaleReference = scale;
   root.traverse((child) => {
     if (child instanceof THREE.Mesh) {
       child.castShadow = true;
@@ -847,6 +942,50 @@ function moveTestPlayer(dt: number): void {
   ((testPlayer.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial).color.set(blocked ? "#ff5e52" : "#f5f0df");
 }
 
+function moveSelectedItem(dt: number): void {
+  if (testMode || (transform as unknown as { dragging?: boolean }).dragging) return;
+  if (isTypingInForm()) return;
+  const target = selected?.mesh ?? selectedAsset;
+  if (!target) return;
+
+  const forwardInput = Number(keys.has("KeyW")) - Number(keys.has("KeyS"));
+  const strafeInput = Number(keys.has("KeyD")) - Number(keys.has("KeyA"));
+  const verticalInput = Number(keys.has("KeyE")) - Number(keys.has("KeyQ"));
+  const planeLength = Math.hypot(forwardInput, strafeInput);
+  if (planeLength <= 0 && verticalInput === 0) return;
+
+  const cameraForward = new THREE.Vector3();
+  camera.getWorldDirection(cameraForward);
+  cameraForward.y = 0;
+  if (cameraForward.lengthSq() <= 0.0001) cameraForward.set(0, 0, -1);
+  cameraForward.normalize();
+  const cameraRight = new THREE.Vector3(cameraForward.z, 0, -cameraForward.x);
+  const speed = SELECTED_MOVE_SPEED * (isIgnoringFloorSnap() ? SELECTED_MOVE_FAST_MULTIPLIER : 1);
+
+  if (planeLength > 0) {
+    target.position
+      .addScaledVector(cameraForward, (forwardInput / planeLength) * speed * dt)
+      .addScaledVector(cameraRight, (strafeInput / planeLength) * speed * dt);
+  }
+  if (verticalInput !== 0) target.position.y += verticalInput * SELECTED_MOVE_VERTICAL_SPEED * dt;
+
+  if (selected) {
+    if (transformMode === "translate") snapBoxToFloor(selected);
+    selected.position = roundTuple([selected.mesh.position.x, selected.mesh.position.y, selected.mesh.position.z]);
+    fillFields(selected);
+    renderList();
+  } else if (selectedAsset) {
+    if (transformMode === "translate") snapAssetToFloor(selectedAsset);
+    selectedTitle.textContent = `ASSET: ${selectedAsset.name || "MODEL"}`;
+  }
+  exportJson();
+}
+
+function isTypingInForm(): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement || active instanceof HTMLSelectElement;
+}
+
 function collidesWithBoxes(position: THREE.Vector3): boolean {
   for (const box of boxes) {
     if (!box.solid) continue;
@@ -864,6 +1003,7 @@ function collidesWithBoxes(position: THREE.Vector3): boolean {
 function animate(): void {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, 1 / 60);
+  moveSelectedItem(dt);
   moveTestPlayer(dt);
   orbit.update();
   renderer.render(scene, camera);

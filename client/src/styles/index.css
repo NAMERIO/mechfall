@@ -111,6 +111,23 @@ body.mapmaker-page .mapmaker-gizmo div {
   gap: 7px;
 }
 
+body.mapmaker-page .mapmaker-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(245, 240, 223, 0.14);
+  background: rgba(5, 10, 12, 0.32);
+}
+
+body.mapmaker-page .mapmaker-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--acid);
+  appearance: auto;
+}
+
 body.mapmaker-page .mapmaker-gizmo button.active {
   border-color: var(--acid);
   background: var(--acid);

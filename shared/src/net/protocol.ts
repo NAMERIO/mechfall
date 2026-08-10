@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 export const MAX_GAME_PACKET_BYTES = 16_384;
 export const MAX_PAINT_STROKES_PER_PACKET = 32;
 
@@ -165,9 +165,35 @@ export interface FindGameMatchData {
   protocol: number;
 }
 
+export interface FindGameRequest {
+  protocol: number;
+  gameId?: string;
+  create?: boolean;
+}
+
+export interface OpenLobbySummary {
+  gameId: string;
+  ownerName: string;
+  playerCount: number;
+  maxPlayers: number;
+}
+
+export interface OpenLobbyListResponse {
+  protocol: number;
+  lobbies: OpenLobbySummary[];
+}
+
+export type FindGameError =
+  | "full"
+  | "invalid_game_id"
+  | "invalid_protocol"
+  | "invalid_request"
+  | "not_joinable"
+  | "server_busy";
+
 export type FindGameResponse =
   | { type: "success"; res: FindGameMatchData }
-  | { type: "error"; error: "full" | "invalid_game_id" | "invalid_protocol" };
+  | { type: "error"; error: FindGameError };
 
 export type GameWsDisconnectReason =
   | "game_not_found"

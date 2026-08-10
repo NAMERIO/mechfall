@@ -1,7 +1,7 @@
-import { GAME, MAX_PAINT_STROKES_PER_PACKET, PLAYER_POSES, type GameEvent, type PaintStroke, type Pose, type ServerMessage, type ServerSnapshot } from "@mechfall/shared";
+import { GAME, MAX_PAINT_STROKES_PER_PACKET, PLAYER_POSES, type GameEvent, type OpenLobbySummary, type PaintStroke, type Pose, type ServerMessage, type ServerSnapshot } from "@mechfall/shared";
 import { InputController } from "../game/InputController.ts";
 import { WorldRenderer } from "../game/WorldRenderer.ts";
-import { GameConnection } from "../net/GameConnection.ts";
+import { GameConnection, listOpenLobbies, type MatchIntent } from "../net/GameConnection.ts";
 
 const element = <T extends HTMLElement>(selector: string): T => {
   const found = document.querySelector<T>(selector);
@@ -17,7 +17,11 @@ const hud = element<HTMLDivElement>("#hud");
 const playButton = element<HTMLButtonElement>("#play-button");
 const serverLabel = element<HTMLElement>("#server-label");
 const nameInput = element<HTMLInputElement>("#name-input");
-const gameIdInput = element<HTMLInputElement>("#game-id-input");
+const lobbyCount = element<HTMLElement>("#lobby-count");
+const lobbyStatus = element<HTMLElement>("#lobby-status");
+const lobbyList = element<HTMLElement>("#lobby-list");
+const refreshLobbiesButton = element<HTMLButtonElement>("#refresh-lobbies-button");
+const leaveGameButton = element<HTMLButtonElement>("#leave-game-button");
 const gameCode = element<HTMLElement>("#game-code");
 const phaseLabel = element<HTMLElement>("#phase-label");
 const timer = element<HTMLElement>("#timer");
@@ -63,6 +67,9 @@ world.bindInput(input);
 
 let connection: GameConnection | undefined;
 let latestSnapshot: ServerSnapshot | undefined;
+let connecting = false;
+let serverOnline = false;
+let lobbyFetchInFlight = false;
 let previousPhase = "";
 let phaseTimeout = 0;
 let inputTimer = 0;
@@ -82,19 +89,21 @@ let lastLocalShotAt = 0;
 let pointerX = window.innerWidth / 2;
 let pointerY = window.innerHeight / 2;
 
+stripLegacyGameIdFromUrl();
 nameInput.value = localStorage.getItem("mechfall-name") ?? `Drifter ${Math.floor(Math.random() * 90 + 10)}`;
-gameIdInput.value = new URLSearchParams(window.location.search).get("gameId")?.toUpperCase().slice(0, 6) ?? "";
 setBrushSize(brushSize);
 
-void updateServerStatus();
-window.setInterval(() => void updateServerStatus(), 15_000);
+void refreshLobbies();
+const lobbyPollTimer = window.setInterval(() => void refreshLobbies(), 5_000);
 
-playButton.addEventListener("click", () => void startGame());
-gameIdInput.addEventListener("input", () => {
-  gameIdInput.value = gameIdInput.value.replace(/[^a-z0-9]/gi, "").toUpperCase().slice(0, 6);
+playButton.addEventListener("click", () => void startGame({ kind: "create" }));
+nameInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !playButton.disabled) void startGame({ kind: "create" });
 });
-gameIdInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") void startGame();
+refreshLobbiesButton.addEventListener("click", () => void refreshLobbies());
+leaveGameButton.addEventListener("click", leaveGame);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void refreshLobbies();
 });
 gameCode.closest(".room-chip")?.addEventListener("click", () => void copyGameId());
 startGameButton.addEventListener("click", requestRoundStart);
@@ -174,42 +183,120 @@ world.canvas.addEventListener("wheel", (event) => {
   }
 }, { passive: false });
 
-async function updateServerStatus(): Promise<void> {
+async function refreshLobbies(): Promise<void> {
+  if (lobbyFetchInFlight || connecting || menu.classList.contains("hidden") || document.visibilityState !== "visible") return;
+
+  lobbyFetchInFlight = true;
+  refreshLobbiesButton.setAttribute("aria-busy", "true");
+  if (lobbyList.childElementCount === 0) setLobbyState("loading", "CHECKING FOR OPEN LOBBIES…");
+  syncMenuControls();
+
   try {
-    const response = await fetch("/api/status");
-    if (!response.ok) throw new Error("offline");
-    const status = await response.json() as { players: number };
-    serverLabel.textContent = `${status.players} ONLINE · SERVER READY`;
-    playButton.disabled = false;
+    const lobbies = await listOpenLobbies();
+    serverOnline = true;
+    renderLobbies(lobbies);
+    serverLabel.textContent = lobbies.length === 0
+      ? "SERVER READY · CREATE THE FIRST"
+      : `${lobbies.length} OPEN · SERVER READY`;
   } catch {
-    serverLabel.textContent = "SERVER OFFLINE · START PNPM DEV";
+    serverOnline = false;
+    lobbyCount.textContent = "OFFLINE";
+    serverLabel.textContent = "SERVER OFFLINE · RETRY";
+    setLobbyState("offline", "LOBBY DIRECTORY OFFLINE · RETRY IN A MOMENT");
+  } finally {
+    lobbyFetchInFlight = false;
+    refreshLobbiesButton.removeAttribute("aria-busy");
+    syncMenuControls();
   }
 }
 
-async function startGame(): Promise<void> {
-  playButton.disabled = true;
+function renderLobbies(lobbies: OpenLobbySummary[]): void {
+  lobbyList.replaceChildren();
+  lobbyCount.textContent = `${lobbies.length} OPEN`;
+  if (lobbies.length === 0) {
+    setLobbyState("empty", "NO OPEN LOBBIES · CREATE THE FIRST ONE");
+    return;
+  }
+
+  lobbyStatus.classList.add("hidden");
+  lobbyList.classList.remove("hidden");
+  for (const lobby of lobbies) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "lobby-row";
+    button.setAttribute("aria-label", `Join ${lobby.ownerName}'s lobby, game ${lobby.gameId}, ${lobby.playerCount} of ${lobby.maxPlayers} players`);
+
+    const copy = document.createElement("span");
+    copy.className = "lobby-row-copy";
+    const owner = document.createElement("strong");
+    owner.className = "lobby-row-owner";
+    owner.textContent = `${lobby.ownerName}'s lobby`;
+    const id = document.createElement("small");
+    id.className = "lobby-row-id";
+    id.textContent = `GAME ${lobby.gameId}`;
+    copy.append(owner, id);
+
+    const count = document.createElement("span");
+    count.className = "lobby-row-count";
+    const currentPlayers = document.createElement("b");
+    currentPlayers.textContent = String(lobby.playerCount);
+    count.append(currentPlayers, ` / ${lobby.maxPlayers}`);
+
+    const arrow = document.createElement("span");
+    arrow.className = "lobby-row-arrow";
+    arrow.setAttribute("aria-hidden", "true");
+    arrow.textContent = "→";
+
+    button.append(copy, count, arrow);
+    button.addEventListener("click", () => void startGame({ kind: "join", gameId: lobby.gameId }));
+    lobbyList.append(button);
+  }
+  syncMenuControls();
+}
+
+function setLobbyState(state: "loading" | "empty" | "offline", message: string): void {
+  lobbyStatus.dataset.state = state;
+  lobbyStatus.textContent = message;
+  lobbyStatus.classList.remove("hidden");
+  lobbyList.classList.add("hidden");
+}
+
+function syncMenuControls(): void {
+  const actionsDisabled = connecting || !serverOnline;
+  playButton.disabled = actionsDisabled;
+  refreshLobbiesButton.disabled = connecting || lobbyFetchInFlight;
+  for (const joinButton of lobbyList.querySelectorAll<HTMLButtonElement>(".lobby-row")) joinButton.disabled = actionsDisabled;
+}
+
+async function startGame(intent: MatchIntent): Promise<void> {
+  if (connecting || !serverOnline) return;
+  connecting = true;
+  syncMenuControls();
   const name = nameInput.value.trim() || "Drifter";
-  const requestedGameId = gameIdInput.value.trim().toUpperCase();
   localStorage.setItem("mechfall-name", name);
   menu.classList.add("hidden");
   loading.classList.remove("hidden");
-  loadingStatus.textContent = requestedGameId ? `Joining game ${requestedGameId}…` : "Finding the nearest open game…";
+  loadingStatus.textContent = intent.kind === "create" ? "Creating your lobby…" : `Joining game ${intent.gameId}…`;
 
   connection?.close();
   connection = new GameConnection(handleMessage);
   try {
-    const match = await connection.connect(name, requestedGameId);
+    const match = await connection.connect(name, intent);
     gameCode.textContent = match.gameId;
-    gameIdInput.value = match.gameId;
-    const url = new URL(window.location.href);
-    url.searchParams.set("gameId", match.gameId);
-    window.history.replaceState({}, "", url);
     loadingStatus.textContent = `Game ${match.gameId} found. Syncing world…`;
   } catch (error) {
+    connection?.close();
+    connection = undefined;
+    connecting = false;
     loading.classList.add("hidden");
     menu.classList.remove("hidden");
-    playButton.disabled = false;
-    serverLabel.textContent = error instanceof Error ? error.message.toUpperCase() : "CONNECTION FAILED";
+    const message = error instanceof Error ? error.message.toUpperCase() : "CONNECTION FAILED";
+    serverOnline = false;
+    lobbyCount.textContent = "REFRESHING";
+    serverLabel.textContent = message;
+    setLobbyState("offline", message);
+    syncMenuControls();
+    window.setTimeout(() => void refreshLobbies(), 1_200);
   }
 }
 
@@ -220,7 +307,7 @@ function handleMessage(message: ServerMessage): void {
   }
   if (message.type === "error") {
     showToast(message.message);
-    if (message.code === "disconnected") window.setTimeout(() => window.location.reload(), 1_800);
+    if (message.code === "disconnected") window.setTimeout(reloadCleanHome, 1_800);
     return;
   }
   if (message.type === "paintStroke") {
@@ -623,7 +710,34 @@ function escapeHtml(value: string): string {
   return holder.innerHTML;
 }
 
+function stripLegacyGameIdFromUrl(): void {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("gameId")) return;
+  url.searchParams.delete("gameId");
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function cleanHomeUrl(): string {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+function leaveGame(): void {
+  window.clearInterval(inputTimer);
+  inputTimer = 0;
+  connection?.close();
+  connection = undefined;
+  window.location.replace(cleanHomeUrl());
+}
+
+function reloadCleanHome(): void {
+  window.location.replace(cleanHomeUrl());
+}
+
 window.addEventListener("beforeunload", () => {
+  window.clearInterval(lobbyPollTimer);
   window.clearInterval(inputTimer);
   connection?.close();
 });

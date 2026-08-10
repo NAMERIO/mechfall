@@ -64,6 +64,14 @@ export class GameRoom {
     return this.humanCount >= GAME.maxPlayers;
   }
 
+  get isWaiting(): boolean {
+    return this.round.phase === "waiting";
+  }
+
+  get ownerName(): string | undefined {
+    return this.ownerId ? this.players.get(this.ownerId)?.name : undefined;
+  }
+
   addHuman(socket: WebSocket, name: string): RoomPlayer {
     const id = randomUUID().slice(0, 8);
     const player = this.createPlayer(id, sanitizeName(name));

@@ -33,32 +33,26 @@
           <span>CALLSIGN</span>
           <input id="name-input" maxlength="18" autocomplete="nickname" value="Drifter" />
         </label>
-        <label class="game-id-field">
-          <span>GAME ID</span>
-          <input id="game-id-input" maxlength="6" autocomplete="off" spellcheck="false" placeholder="PUBLIC MATCH" />
-        </label>
-        <button id="play-button" class="play-button">
-          <span>DROP IN</span>
+        <button id="play-button" class="play-button" type="button" disabled>
+          <span>CREATE LOBBY</span>
           <small id="server-label">CHECKING SERVER…</small>
         </button>
         <div class="card-footer">
-          <span>PUBLIC MATCH</span><span>2–12 PLAYERS</span><span>OWNER START</span>
+          <span>NEW LOBBY</span><span>2–12 PLAYERS</span><span>OWNER START</span>
         </div>
       </section>
 
-      <aside class="how-to panel">
-        <span class="kicker">FIELD MANUAL</span>
-        <div class="manual-row"><kbd>WASD</kbd><span>Move</span></div>
-        <div class="manual-row"><kbd>SPACE</kbd><span>Jump / hold to climb up</span></div>
-        <div class="manual-row"><kbd>SHIFT</kbd><span>Sprint / hold to climb down; release to stop</span></div>
-        <div class="manual-row"><kbd>A / D</kbd><span>Move sideways while attached</span></div>
-        <div class="manual-row"><kbd>S / AWAY</kbd><span>Move away from the surface to release</span></div>
-        <div class="manual-row"><kbd>F</kbd><span>Paint yourself</span></div>
-        <div class="manual-row"><kbd>LMB</kbd><span>Hold to face and turn your body · seeker click fires</span></div>
-        <div class="manual-row"><kbd>RMB</kbd><span>Hold for 360° camera orbit</span></div>
-        <div class="manual-row"><kbd>WHEEL</kbd><span>Zoom · resize paint brush</span></div>
-        <div class="manual-row"><kbd>C</kbd><span>Change shape</span></div>
-        <div class="manual-row"><kbd>Q</kbd><span>Whistle</span></div>
+      <aside class="lobby-browser panel" aria-labelledby="lobby-browser-title">
+        <header class="lobby-browser-header">
+          <div>
+            <span class="kicker" id="lobby-browser-title">SERVER LOBBIES</span>
+            <strong id="lobby-count">SCANNING</strong>
+          </div>
+          <button id="refresh-lobbies-button" class="lobby-refresh" type="button" aria-label="Refresh server lobbies" title="Refresh server lobbies">↻</button>
+        </header>
+        <div id="lobby-status" class="lobby-status" role="status" aria-live="polite">CHECKING FOR OPEN LOBBIES…</div>
+        <div id="lobby-list" class="lobby-list" aria-label="Open server lobbies"></div>
+        <footer>SELECT A LOBBY TO JOIN</footer>
       </aside>
 
       <footer class="menu-footer">ORIGINAL WEB MULTIPLAYER PROTOTYPE · THREE.JS + WEBSOCKETS</footer>
@@ -71,6 +65,7 @@
     </div>
 
     <div id="hud" class="hud hidden">
+      <button id="leave-game-button" class="leave-game-button" type="button" aria-label="Leave game and return home">← HOME / LEAVE</button>
       <div class="hud-top">
         <section class="room-chip" title="Click to copy game ID"><span>GAME ID</span><strong id="game-code">------</strong></section>
         <section class="round-clock">

@@ -8,8 +8,10 @@ import {
   PROTOCOL_VERSION,
   MAX_GAME_PACKET_BYTES,
   decodeClientMessage,
+  type FindGameRequest,
   type FindGameResponse,
-  type GameWsDisconnectReason
+  type GameWsDisconnectReason,
+  type OpenLobbyListResponse
 } from "@mechfall/shared";
 import { RoomManager } from "./matchmaking/RoomManager.js";
 
@@ -31,13 +33,34 @@ app.get("/api/status", (_request, response) => response.json({
   protocol: PROTOCOL_VERSION
 }));
 
+app.get("/api/lobbies", (_request, response) => {
+  response.set("cache-control", "no-store");
+  const payload: OpenLobbyListResponse = {
+    protocol: PROTOCOL_VERSION,
+    lobbies: rooms.listOpenLobbies()
+  };
+  response.json(payload);
+});
+
 app.post(["/api/find_game", "/api/matchmake"], (request, response) => {
-  if (Number(request.body?.protocol) !== PROTOCOL_VERSION) {
+  const body = request.body as Partial<FindGameRequest> | undefined;
+  if (Number(body?.protocol) !== PROTOCOL_VERSION) {
     const payload: FindGameResponse = { type: "error", error: "invalid_protocol" };
     response.json(payload);
     return;
   }
-  const result = rooms.findGame(typeof request.body?.gameId === "string" ? request.body.gameId : undefined);
+  const hasGameId = Object.prototype.hasOwnProperty.call(body, "gameId");
+  const hasCreate = Object.prototype.hasOwnProperty.call(body, "create");
+  if ((hasGameId && typeof body?.gameId !== "string")
+      || (hasCreate && typeof body?.create !== "boolean")
+      || (body?.create === true && hasGameId)) {
+    const payload: FindGameResponse = { type: "error", error: "invalid_request" };
+    response.json(payload);
+    return;
+  }
+  const result = body?.create === true
+    ? rooms.createGame()
+    : rooms.findGame(body?.gameId);
   if ("error" in result) {
     const payload: FindGameResponse = { type: "error", error: result.error };
     response.json(payload);

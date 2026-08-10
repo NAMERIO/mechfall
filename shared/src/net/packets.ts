@@ -14,6 +14,8 @@ export enum WsPacketType {
   Whistle = 8,
   Ping = 9,
   StartGame = 10,
+  UndoPaint = 11,
+  RedoPaint = 12,
 
   Welcome = 64,
   Snapshot = 65,
@@ -29,6 +31,8 @@ const CLIENT_PACKET_TYPES: Record<ClientMessage["type"], WsPacketType> = {
   paintStroke: WsPacketType.PaintStroke,
   paintStrokes: WsPacketType.PaintStrokes,
   clearPaint: WsPacketType.ClearPaint,
+  undoPaint: WsPacketType.UndoPaint,
+  redoPaint: WsPacketType.RedoPaint,
   pose: WsPacketType.Pose,
   shoot: WsPacketType.Shoot,
   startGame: WsPacketType.StartGame,

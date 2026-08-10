@@ -92,7 +92,7 @@
         <header>
           <span>CHROMA STUDIO</span>
           <strong>PAINT YOUR DISGUISE</strong>
-          <small>Drag to paint · right-drag to orbit · use the pipette to pick a surface color</small>
+          <small>Drag to paint · scroll to zoom · Ctrl + scroll for brush size · right-drag to orbit</small>
         </header>
         <div id="brush-cursor" class="brush-cursor"></div>
         <div class="paint-toolbar panel-lite">
@@ -125,8 +125,11 @@
             <button id="color-wheel-button" class="color-wheel" type="button" aria-label="Choose a custom paint color"><i id="color-wheel-marker"></i></button>
             <div class="color-picker-readout"><div class="paint-hex-row"><strong id="paint-color-value">#F5F0DF</strong><button id="sample-color-button" type="button" aria-label="Use the pipette to pick a surface color" title="Pick a surface color"><img src="/pipette.svg" alt="" aria-hidden="true" /></button></div><input id="color-input" type="color" value="#f5f0df" aria-label="Open system color picker" /></div>
           </div>
-          <label class="brush-size"><span>BRUSH SIZE</span><input id="brush-size" type="range" min="2" max="18" value="7" /></label>
-          <button id="clear-paint-button" class="tool-button"><b>↺</b><span>CLEAR</span><small>START OVER</small></button>
+          <label class="brush-size"><span>BRUSH SIZE</span><small>CTRL + SCROLL</small><input id="brush-size" type="range" min="0.5" max="28" step="0.5" value="7" /></label>
+          <div class="paint-history-tools" aria-label="Paint history">
+            <button id="undo-paint-button" class="tool-button" type="button" disabled><b>↶</b><span>UNDO</span></button>
+            <button id="redo-paint-button" class="tool-button" type="button" disabled><b>↷</b><span>REDO</span></button>
+          </div>
           <button id="done-paint-button" class="done-paint-button">DONE PAINTING <kbd>F</kbd></button>
         </div>
       </section>

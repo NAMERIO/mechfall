@@ -61,7 +61,8 @@ const score = element<HTMLElement>("#score");
 const paintModeUi = element<HTMLElement>("#paint-mode-ui");
 const brushCursor = element<HTMLElement>("#brush-cursor");
 const brushSizeInput = element<HTMLInputElement>("#brush-size");
-const clearPaintButton = element<HTMLButtonElement>("#clear-paint-button");
+const undoPaintButton = element<HTMLButtonElement>("#undo-paint-button");
+const redoPaintButton = element<HTMLButtonElement>("#redo-paint-button");
 const donePaintButton = element<HTMLButtonElement>("#done-paint-button");
 
 const world = new WorldRenderer(game);
@@ -88,10 +89,19 @@ let lastPaintPoint: { x: number; y: number } | undefined;
 let queuedPaintPoint: { x: number; y: number } | undefined;
 let paintFrameQueued = false;
 let pendingPaintStrokes: PaintStroke[] = [];
+let activePaintAction: PaintEditAction | undefined;
+let paintActionSequence = 0;
+let paintUndoStack: PaintEditAction[] = [];
+let paintRedoStack: PaintEditAction[] = [];
 let paintFlushTimer = 0;
 let lastLocalShotAt = 0;
 let pointerX = window.innerWidth / 2;
 let pointerY = window.innerHeight / 2;
+
+interface PaintEditAction {
+  id: string;
+  strokes: PaintStroke[];
+}
 
 stripLegacyGameIdFromUrl();
 nameInput.value = localStorage.getItem("mechfall-name") ?? `Drifter ${Math.floor(Math.random() * 90 + 10)}`;
@@ -130,7 +140,8 @@ for (const poseChoice of document.querySelectorAll<HTMLButtonElement>("[data-pos
 }
 whistleButton.addEventListener("click", whistle);
 donePaintButton.addEventListener("click", togglePaintMode);
-clearPaintButton.addEventListener("click", clearPaint);
+undoPaintButton.addEventListener("click", undoPaint);
+redoPaintButton.addEventListener("click", redoPaint);
 brushSizeInput.addEventListener("input", () => setBrushSize(Number(brushSizeInput.value) / 100));
 for (const swatch of document.querySelectorAll<HTMLButtonElement>("[data-paint-color]")) {
   swatch.addEventListener("click", () => selectPaintColor(swatch.dataset.paintColor ?? paintColor));
@@ -176,6 +187,7 @@ world.canvas.addEventListener("pointerdown", (event) => {
     return;
   }
   if (event.button === 0) {
+    activePaintAction = { id: createPaintActionId(), strokes: [] };
     painting = true;
     lastPaintPoint = { x: event.clientX, y: event.clientY };
     paintLineTo(event.clientX, event.clientY);
@@ -183,6 +195,7 @@ world.canvas.addEventListener("pointerdown", (event) => {
 });
 window.addEventListener("pointerup", () => {
   flushQueuedPaintLine();
+  commitPaintAction();
   painting = false;
   lastPaintPoint = undefined;
   orbitingPaintCamera = false;
@@ -192,7 +205,7 @@ world.canvas.addEventListener("contextmenu", (event) => {
 });
 world.canvas.addEventListener("wheel", (event) => {
   event.preventDefault();
-  if (paintMode) {
+  if (paintMode && event.ctrlKey) {
     setBrushSize(brushSize + (event.deltaY > 0 ? -0.01 : 0.01));
   } else {
     world.zoomCamera(event.deltaY);
@@ -341,7 +354,10 @@ function handleMessage(message: ServerMessage): void {
     return;
   }
   if (message.type === "paintReset") {
-    if (!message.playerId || message.playerId === latestSnapshot?.selfId) discardPendingPaint();
+    if (!message.playerId || message.playerId === latestSnapshot?.selfId) {
+      discardPendingPaint();
+      clearPaintHistory();
+    }
     world.resetPaint(message.playerId);
     return;
   }
@@ -624,7 +640,12 @@ function selectPose(pose: Pose): void {
 
 function paintLineTo(clientX: number, clientY: number): void {
   const from = lastPaintPoint ?? { x: clientX, y: clientY };
-  pendingPaintStrokes.push(...world.paintBrushLineAtScreen(from.x, from.y, clientX, clientY, paintColor, brushSize));
+  const strokes = world.paintBrushLineAtScreen(from.x, from.y, clientX, clientY, paintColor, brushSize);
+  if (activePaintAction) {
+    for (const stroke of strokes) stroke.actionId = activePaintAction.id;
+    activePaintAction.strokes.push(...strokes);
+  }
+  pendingPaintStrokes.push(...strokes);
   lastPaintPoint = { x: clientX, y: clientY };
   schedulePaintFlush();
 }
@@ -665,13 +686,66 @@ function flushPaintStrokes(): void {
   if (pendingPaintStrokes.length > 0) schedulePaintFlush();
 }
 
-function clearPaint(): void {
+function commitPaintAction(): void {
+  if (!activePaintAction || activePaintAction.strokes.length === 0) {
+    activePaintAction = undefined;
+    return;
+  }
+  paintUndoStack.push(activePaintAction);
+  paintRedoStack = [];
+  activePaintAction = undefined;
+  updatePaintHistoryControls();
+}
+
+function undoPaint(): void {
   const selfId = latestSnapshot?.selfId;
   if (!paintMode || !selfId) return;
-  discardPendingPaint();
-  world.resetPaint(selfId);
-  connection?.send({ type: "clearPaint" });
-  showToast("CANVAS CLEARED");
+  const action = paintUndoStack.pop();
+  if (!action) return;
+  flushAllPendingPaintStrokes();
+  paintRedoStack.push(action);
+  world.removePaintAction(selfId, action.id);
+  connection?.send({ type: "undoPaint", actionId: action.id });
+  updatePaintHistoryControls();
+  showToast("LAST STROKE UNDONE");
+}
+
+function redoPaint(): void {
+  const selfId = latestSnapshot?.selfId;
+  if (!paintMode || !selfId) return;
+  const action = paintRedoStack.pop();
+  if (!action) return;
+  paintUndoStack.push(action);
+  for (const stroke of action.strokes) world.applyPaintStroke(selfId, stroke);
+  connection?.send({ type: "redoPaint", actionId: action.id });
+  updatePaintHistoryControls();
+  showToast("STROKE RESTORED");
+}
+
+function flushAllPendingPaintStrokes(): void {
+  window.clearTimeout(paintFlushTimer);
+  paintFlushTimer = 0;
+  while (pendingPaintStrokes.length > 0) {
+    const strokes = pendingPaintStrokes.splice(0, MAX_PAINT_STROKES_PER_PACKET);
+    connection?.send({ type: "paintStrokes", strokes });
+  }
+}
+
+function clearPaintHistory(): void {
+  activePaintAction = undefined;
+  paintUndoStack = [];
+  paintRedoStack = [];
+  updatePaintHistoryControls();
+}
+
+function updatePaintHistoryControls(): void {
+  undoPaintButton.disabled = paintUndoStack.length === 0;
+  redoPaintButton.disabled = paintRedoStack.length === 0;
+}
+
+function createPaintActionId(): string {
+  paintActionSequence += 1;
+  return `paint-${Date.now().toString(36)}-${paintActionSequence.toString(36)}`;
 }
 
 function discardPendingPaint(): void {
@@ -685,9 +759,9 @@ function discardPendingPaint(): void {
 }
 
 function setBrushSize(size: number): void {
-  brushSize = Math.max(0.02, Math.min(0.18, size));
-  brushSizeInput.value = String(Math.round(brushSize * 100));
-  const cursorSize = Math.round(18 + brushSize * 240);
+  brushSize = Math.max(0.005, Math.min(0.28, size));
+  brushSizeInput.value = String(Math.round(brushSize * 200) / 2);
+  const cursorSize = Math.round(10 + brushSize * 240);
   brushCursor.style.width = `${cursorSize}px`;
   brushCursor.style.height = `${cursorSize}px`;
 }

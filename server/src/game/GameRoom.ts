@@ -22,6 +22,10 @@ import {
 } from "@mechfall/shared";
 import { moveBody, moveClingingBody, wantsToDetachFromSurface } from "./physics.js";
 
+function isPaintActionId(value: unknown): value is string {
+  return typeof value === "string" && /^paint-[a-z0-9]+-[a-z0-9]+$/i.test(value);
+}
+
 interface RoomPlayer extends PlayerState {
   socket?: WebSocket;
   input: Required<InputPayload>;
@@ -30,6 +34,7 @@ interface RoomPlayer extends PlayerState {
   lastWhistleAt: number;
   lastPaintAt: number;
   paintStrokes: PaintStroke[];
+  paintRedo: Array<{ actionId: string; strokes: PaintStroke[] }>;
   clingDetachedUntil: number;
 }
 
@@ -106,8 +111,11 @@ export class GameRoom {
     if (message.type === "input") this.applyInput(player, message.input);
     if (message.type === "paintStroke") this.applyPaintStrokes(player, [message.stroke]);
     if (message.type === "paintStrokes") this.applyPaintStrokes(player, message.strokes);
+    if (message.type === "undoPaint") this.undoPaint(player, message.actionId);
+    if (message.type === "redoPaint") this.redoPaint(player, message.actionId);
     if (message.type === "clearPaint" && player.role === "hider" && player.alive) {
       player.paintStrokes = [];
+      player.paintRedo = [];
       this.broadcast({ type: "paintReset", playerId: player.id });
     }
     if (message.type === "pose" && player.role === "hider" && player.alive && isPose(message.pose)) player.pose = message.pose;
@@ -144,6 +152,7 @@ export class GameRoom {
       lastWhistleAt: 0,
       lastPaintAt: 0,
       paintStrokes: [],
+      paintRedo: [],
       clingDetachedUntil: 0
     };
   }
@@ -174,12 +183,13 @@ export class GameRoom {
 
   private applyPaintStrokes(player: RoomPlayer, strokes: PaintStroke[]): void {
     const now = Date.now();
-    if (player.role !== "hider" || !player.alive || now - player.lastPaintAt < 20) return;
+    if (player.role !== "hider" || !player.alive) return;
     if (!Array.isArray(strokes)) return;
     const safeStrokes = strokes.slice(0, MAX_PAINT_STROKES_PER_PACKET).map((stroke) => this.sanitizePaintStroke(stroke)).filter((stroke): stroke is PaintStroke => Boolean(stroke));
     if (safeStrokes.length === 0) return;
     player.lastPaintAt = now;
     player.paintStrokes.push(...safeStrokes);
+    player.paintRedo = [];
     if (player.paintStrokes.length > 2_400) player.paintStrokes.splice(0, player.paintStrokes.length - 2_400);
     this.broadcast({ type: "paintStrokes", playerId: player.id, strokes: safeStrokes });
   }
@@ -202,8 +212,33 @@ export class GameRoom {
       brushEndU: hasProjectedBrush && hasBrushEnd ? clamp(stroke.brushEndU!, -1, 2) : undefined,
       brushEndV: hasProjectedBrush && hasBrushEnd ? clamp(stroke.brushEndV!, -1, 2) : undefined,
       color: stroke.color.toLowerCase(),
-      size: clamp(stroke.size, 0.002, 0.22)
+      size: clamp(stroke.size, 0.002, 0.22),
+      actionId: isPaintActionId(stroke.actionId) ? stroke.actionId : undefined
     };
+  }
+
+  private undoPaint(player: RoomPlayer, actionId: string): void {
+    if (player.role !== "hider" || !player.alive || !isPaintActionId(actionId)) return;
+    const lastStroke = player.paintStrokes.at(-1);
+    if (lastStroke?.actionId !== actionId) return;
+    let firstStroke = player.paintStrokes.length - 1;
+    while (firstStroke > 0 && player.paintStrokes[firstStroke - 1]?.actionId === actionId) firstStroke -= 1;
+    const strokes = player.paintStrokes.splice(firstStroke);
+    player.paintRedo.push({ actionId, strokes });
+    this.broadcastPaintState(player);
+  }
+
+  private redoPaint(player: RoomPlayer, actionId: string): void {
+    if (player.role !== "hider" || !player.alive || !isPaintActionId(actionId)) return;
+    const action = player.paintRedo.at(-1);
+    if (!action || action.actionId !== actionId) return;
+    player.paintRedo.pop();
+    player.paintStrokes.push(...action.strokes);
+    this.broadcastPaintState(player);
+  }
+
+  private broadcastPaintState(player: RoomPlayer): void {
+    this.broadcast({ type: "paintState", players: [{ playerId: player.id, strokes: player.paintStrokes }] });
   }
 
   private tick(dt: number): void {
@@ -340,6 +375,7 @@ export class GameRoom {
       player.color = player.role === "hunter" ? "#ff5d52" : "#f5f0df";
       player.whistlingUntil = 0;
       player.paintStrokes = [];
+      player.paintRedo = [];
       const spawn = SPAWN_POINTS[index % SPAWN_POINTS.length] ?? [0, 0, 0];
       player.position = { x: spawn[0], y: spawn[1], z: spawn[2] };
       player.velocity = { x: 0, y: 0, z: 0 };
@@ -439,7 +475,7 @@ export class GameRoom {
       selfId: player.id,
       gameId: this.id,
       ownerId: this.ownerId,
-      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, clingDetachedUntil: _clingDetachedUntil, ...state }) => state),
+      players: [...this.players.values()].map(({ socket: _socket, input: _input, lastInputAt: _lastInputAt, lastShotAt: _lastShotAt, lastWhistleAt: _lastWhistleAt, lastPaintAt: _lastPaintAt, paintStrokes: _paintStrokes, paintRedo: _paintRedo, clingDetachedUntil: _clingDetachedUntil, ...state }) => state),
       round: this.round,
       event: this.pendingEvent
     });

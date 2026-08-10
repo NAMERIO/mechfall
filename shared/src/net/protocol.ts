@@ -65,6 +65,8 @@ export interface PaintStroke {
   brushEndV?: number;
   color: string;
   size: number;
+  /** Groups all dabs from one pointer stroke for editor undo/redo. */
+  actionId?: string;
 }
 
 export interface PlayerPaintState {
@@ -142,6 +144,8 @@ export type ClientMessage =
   | { type: "paintStroke"; stroke: PaintStroke }
   | { type: "paintStrokes"; strokes: PaintStroke[] }
   | { type: "clearPaint" }
+  | { type: "undoPaint"; actionId: string }
+  | { type: "redoPaint"; actionId: string }
   | { type: "pose"; pose: Pose }
   | { type: "shoot"; yaw: number; pitch: number }
   | { type: "startGame" }

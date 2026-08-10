@@ -219,7 +219,7 @@ export class WorldRenderer {
   zoomCamera(deltaY: number): void {
     if (!Number.isFinite(deltaY) || deltaY === 0) return;
     const zoomDelta = Math.sign(deltaY) * THREE.MathUtils.clamp(Math.abs(deltaY) * 0.006, 0.18, 0.75);
-    this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + zoomDelta, 2.8, 9);
+    this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + zoomDelta, 2.8, 15);
   }
 
   applySnapshot(snapshot: ServerSnapshot): void {
@@ -324,7 +324,7 @@ export class WorldRenderer {
     color: string,
     size: number
   ): PaintStroke[] {
-    const radius = 9 + size * 120;
+    const radius = 3 + size * 160;
     const avatar = this.avatars.get(this.selfId);
     const surface = avatar?.paintSurfaces.get("body");
     if (!avatar?.state.alive || avatar.state.role !== "hider" || !surface?.uvPaintLayer) {
@@ -489,6 +489,17 @@ export class WorldRenderer {
     }
     avatar.strokes.push(stroke);
     this.drawStroke(avatar, stroke);
+  }
+
+  removePaintAction(playerId: string, actionId: string): void {
+    const avatar = this.avatars.get(playerId);
+    if (!avatar) {
+      const pending = this.pendingPaint.get(playerId);
+      if (pending) removeLatestPaintAction(pending, actionId);
+      return;
+    }
+    removeLatestPaintAction(avatar.strokes, actionId);
+    this.redrawPaint(avatar);
   }
 
   applyPaintState(players: PlayerPaintState[]): void {
@@ -1279,6 +1290,14 @@ function isVisibleInScene(object: THREE.Object3D): boolean {
 
 function rgbToHex(red: number, green: number, blue: number): string {
   return `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function removeLatestPaintAction(strokes: PaintStroke[], actionId: string): void {
+  const lastStroke = strokes.at(-1);
+  if (lastStroke?.actionId !== actionId) return;
+  let firstStroke = strokes.length - 1;
+  while (firstStroke > 0 && strokes[firstStroke - 1]?.actionId === actionId) firstStroke -= 1;
+  strokes.splice(firstStroke);
 }
 
 /**

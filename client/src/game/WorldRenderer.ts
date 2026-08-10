@@ -108,6 +108,10 @@ export class WorldRenderer {
   private paintOrbitPitch = 0;
   private cameraDistance = 5.4;
   private targetCameraDistance = 5.4;
+  private readonly cameraFocus = new THREE.Vector3();
+  private cameraOrbitYaw = 0;
+  private cameraOrbitPitch = -0.2;
+  private cameraRigInitialized = false;
   private characterTemplate?: THREE.Group;
   private characterAnimations: THREE.AnimationClip[] = [];
   private characterAlignment?: CharacterAlignment;
@@ -1360,16 +1364,35 @@ export class WorldRenderer {
       this.cameraDistance = THREE.MathUtils.lerp(this.cameraDistance, this.targetCameraDistance, 1 - Math.exp(-CAMERA_ZOOM_RESPONSE * dt));
       const distance = this.cameraDistance;
       const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose], 0));
-      const horizontal = Math.cos(pitch) * distance;
-      const desired = target.clone().add(new THREE.Vector3(
-        Math.sin(yaw) * horizontal,
-        CAMERA_VERTICAL_LIFT + Math.sin(-pitch) * distance,
-        Math.cos(yaw) * horizontal
+      if (!this.cameraRigInitialized) {
+        this.cameraFocus.copy(target);
+        this.cameraOrbitYaw = yaw;
+        this.cameraOrbitPitch = pitch;
+      } else {
+        this.cameraFocus.lerp(target, 1 - Math.exp(-CAMERA_FOCUS_RESPONSE * dt));
+        this.cameraOrbitYaw += shortestAngle(this.cameraOrbitYaw, yaw) * (1 - Math.exp(-CAMERA_ORBIT_RESPONSE * dt));
+        this.cameraOrbitPitch = THREE.MathUtils.lerp(
+          this.cameraOrbitPitch,
+          pitch,
+          1 - Math.exp(-CAMERA_ORBIT_RESPONSE * dt)
+        );
+      }
+      const horizontal = Math.cos(this.cameraOrbitPitch) * distance;
+      const desired = this.cameraFocus.clone().add(new THREE.Vector3(
+        Math.sin(this.cameraOrbitYaw) * horizontal,
+        CAMERA_VERTICAL_LIFT + Math.sin(-this.cameraOrbitPitch) * distance,
+        Math.cos(this.cameraOrbitYaw) * horizontal
       ));
-      const safeDesired = this.resolveCameraObstruction(target, desired);
-      this.camera.position.lerp(safeDesired, 1 - Math.exp(-CAMERA_FOLLOW_RESPONSE * dt));
-      this.camera.lookAt(target);
+      const safeDesired = this.resolveCameraObstruction(this.cameraFocus, desired);
+      if (!this.cameraRigInitialized) {
+        this.camera.position.copy(safeDesired);
+        this.cameraRigInitialized = true;
+      } else {
+        this.camera.position.lerp(safeDesired, 1 - Math.exp(-CAMERA_POSITION_RESPONSE * dt));
+      }
+      this.camera.lookAt(this.cameraFocus);
     } else {
+      this.cameraRigInitialized = false;
       this.camera.position.set(18, 16, 22);
       this.camera.lookAt(0, 1, 0);
     }
@@ -1787,7 +1810,9 @@ const MIN_CAMERA_COLLISION_DISTANCE = 0.45;
 const CAMERA_VERTICAL_LIFT = 2.35;
 const CAMERA_MAX_WORLD_HEIGHT = Math.max(24, WORLD_SIZE * 0.5);
 const CAMERA_ZOOM_RESPONSE = 4.5;
-const CAMERA_FOLLOW_RESPONSE = 3.6;
+const CAMERA_FOCUS_RESPONSE = 6;
+const CAMERA_ORBIT_RESPONSE = 18;
+const CAMERA_POSITION_RESPONSE = 22;
 const LOCAL_TURN_RESPONSE = 18;
 const REMOTE_TURN_RESPONSE = 18;
 const MAX_BODY_PITCH_UP = Math.PI / 2;

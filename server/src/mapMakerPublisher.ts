@@ -130,7 +130,7 @@ function requireBoxes(value: unknown): WorldBox[] {
 }
 
 function requireHulls(value: unknown): WorldHull[] {
-  if (!Array.isArray(value) || value.length > 200) throw new Error("The map must contain at most 200 collision meshes.");
+  if (!Array.isArray(value) || value.length > 500) throw new Error("The map must contain at most 500 collision meshes.");
   let totalVertices = 0;
   let totalTriangles = 0;
   return value.map((item, index) => {

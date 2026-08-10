@@ -22,6 +22,10 @@ export type ClingMoveResult = "attached" | "released" | "mantled";
 interface HullSurface {
   hull: WorldHull;
   points: readonly (readonly [number, number])[];
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
   minY: number;
   maxY: number;
   solidTop: boolean;
@@ -46,10 +50,20 @@ const SOLID_TOP_MIN_NORMAL_Y = 0.9;
 
 const HULL_SURFACES: readonly HullSurface[] = WORLD_HULLS
   .filter((hull) => hull.solid && hull.vertices.length >= 4)
-  .map((hull) => {
-    const footprint = worldHullFootprint(hull);
-    return { hull, ...footprint, solidTop: worldHullHasSolidTop(hull, footprint.maxY) };
-  });
+  .map(makeHullSurface);
+
+function makeHullSurface(hull: WorldHull): HullSurface {
+  const footprint = worldHullFootprint(hull);
+  return {
+    hull,
+    ...footprint,
+    minX: Math.min(...footprint.points.map((point) => point[0])),
+    maxX: Math.max(...footprint.points.map((point) => point[0])),
+    minZ: Math.min(...footprint.points.map((point) => point[1])),
+    maxZ: Math.max(...footprint.points.map((point) => point[1])),
+    solidTop: worldHullHasSolidTop(hull, footprint.maxY)
+  };
+}
 
 /** Detailed box-like models receive a continuous roof despite tiny mesh gaps. */
 export function worldHullHasSolidTop(hull: WorldHull, maxY?: number): boolean {
@@ -462,6 +476,12 @@ function footprintOverlapsHullAt(
   minimumOverlap: number
 ): boolean {
   if (surface.points.length < 3) return false;
+  const extentX = playerContactDistance(yaw, 1, 0);
+  const extentZ = playerContactDistance(yaw, 0, 1);
+  if (x + extentX <= surface.minX + minimumOverlap
+      || x - extentX >= surface.maxX - minimumOverlap
+      || z + extentZ <= surface.minZ + minimumOverlap
+      || z - extentZ >= surface.maxZ - minimumOverlap) return false;
   for (let index = 0; index < surface.points.length; index += 1) {
     const start = surface.points[index]!;
     const end = surface.points[(index + 1) % surface.points.length]!;
@@ -584,8 +604,7 @@ export function walkableWorldHullSupportHeightAt(
   z: number,
   yaw: number
 ): number | undefined {
-  const footprint = worldHullFootprint(hull);
-  const surface = { hull, ...footprint, solidTop: worldHullHasSolidTop(hull, footprint.maxY) };
+  const surface = makeHullSurface(hull);
   return walkableHullSupport(surface, x, z, yaw)?.height;
 }
 
@@ -805,6 +824,12 @@ function sweepExpandedHull(
   const deltaX = toX - fromX;
   const deltaZ = toZ - fromZ;
   if (Math.hypot(deltaX, deltaZ) <= Number.EPSILON || surface.points.length < 3) return undefined;
+  const extentX = playerContactDistance(yaw, 1, 0);
+  const extentZ = playerContactDistance(yaw, 0, 1);
+  if (Math.max(fromX, toX) + extentX < surface.minX
+      || Math.min(fromX, toX) - extentX > surface.maxX
+      || Math.max(fromZ, toZ) + extentZ < surface.minZ
+      || Math.min(fromZ, toZ) - extentZ > surface.maxZ) return undefined;
   let enter = 0;
   let exit = 1;
   let enterNormalX = 0;
@@ -845,18 +870,12 @@ export function sweepWorldHull(
   yaw: number,
   hull: WorldHull
 ): { time: number; normalX: number; normalZ: number } | undefined {
-  const footprint = worldHullFootprint(hull);
-  return sweepExpandedHull(fromX, fromZ, toX, toZ, yaw, {
-    hull,
-    ...footprint,
-    solidTop: worldHullHasSolidTop(hull, footprint.maxY)
-  });
+  return sweepExpandedHull(fromX, fromZ, toX, toZ, yaw, makeHullSurface(hull));
 }
 
 /** Exposed for regression tests and authoritative collision previews. */
 export function resolveWorldHullPenetration(body: PhysicsBody, yaw: number, hull: WorldHull): boolean {
-  const footprint = worldHullFootprint(hull);
-  const surface = { hull, ...footprint, solidTop: worldHullHasSolidTop(hull, footprint.maxY) };
+  const surface = makeHullSurface(hull);
   let movedAny = false;
   for (let pass = 0; pass < HULL_DEPENETRATION_PASSES; pass += 1) {
     const moved = depenetrateFromHull(body, yaw, surface);

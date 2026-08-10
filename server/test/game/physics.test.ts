@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GAME, worldHullHeightAt } from "@mechfall/shared";
+import { GAME, worldHullHeightAt, type WorldHull } from "@mechfall/shared";
 import {
   canFollowWalkableHeight,
   isWalkableGroundContact,
@@ -65,6 +65,20 @@ test("smooth convex hulls report authoritative angled contact", () => {
   assert.ok(hit.normalX < -0.7);
   assert.ok(Math.abs(hit.normalZ) > 0.7);
   assert.ok(hit.time > 0 && hit.time < 1);
+});
+
+test("thin hull corners do not collide far beyond their actual endpoints", () => {
+  const hull: WorldHull = {
+    id: "thin-wall-section",
+    vertices: [[0, 0, 10], [0.15, 0, 0], [0.15, 2, 10], [0, 2, 10]],
+    triangles: [[0, 1, 2], [0, 2, 3]],
+    color: "#ffffff",
+    kind: "hull",
+    solid: true
+  };
+  const body = { position: { x: 0.2, y: 0, z: -10 }, velocity: { x: 0, y: 0, z: 0 } };
+  assert.equal(resolveWorldHullPenetration(body, 0, hull), false);
+  assert.deepEqual(body.position, { x: 0.2, y: 0, z: -10 });
 });
 
 test("a body left inside a detailed hull corner is resolved during the same tick", () => {

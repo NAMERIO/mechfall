@@ -48,6 +48,7 @@ interface Avatar {
   leftLeg?: THREE.Mesh;
   rightLeg?: THREE.Mesh;
   visual?: THREE.Object3D;
+  visualBasePosition?: THREE.Vector3;
   bodyPitch?: number;
   bodyPitchApplied?: number;
   bodyPitchBones?: Array<{ bone: THREE.Object3D; weight: number }>;
@@ -99,6 +100,8 @@ export class WorldRenderer {
   private readonly raycaster = new THREE.Raycaster();
   private readonly pendingPaint = new Map<string, PaintStroke[]>();
   private readonly beforeRenderTasks = new Set<() => void>();
+  private readonly attachedVisualTarget = new THREE.Vector3();
+  private readonly attachedVisualOffset = new THREE.Vector3();
   private selfId = "";
   private roundPhase: ServerSnapshot["round"]["phase"] = "waiting";
   private input?: InputController;
@@ -1024,6 +1027,7 @@ export class WorldRenderer {
       strokes: this.pendingPaint.get(state.id) ?? [],
       procedural: false,
       visual,
+      visualBasePosition: alignment.position.clone(),
       bodyPitch: 0,
       bodyPitchApplied: 0,
       bodyPitchBones,
@@ -1045,6 +1049,8 @@ export class WorldRenderer {
 
   private createProceduralAvatar(state: PlayerState): Avatar {
     const root = new THREE.Group();
+    const visual = new THREE.Group();
+    root.add(visual);
     const paintSurfaces = new Map<PaintPart, PaintSurface>();
     const makePaintedMesh = (part: PaintPart, geometry: THREE.BufferGeometry): THREE.Mesh => {
       const canvas = document.createElement("canvas");
@@ -1075,12 +1081,12 @@ export class WorldRenderer {
     leftLeg.position.set(-0.27, 0.42, 0);
     const rightLeg = makePaintedMesh("rightLeg", new THREE.CapsuleGeometry(0.21, 0.72, 4, 10));
     rightLeg.position.set(0.27, 0.42, 0);
-    root.add(body, head, leftArm, rightArm, leftLeg, rightLeg);
+    visual.add(body, head, leftArm, rightArm, leftLeg, rightLeg);
 
     for (const x of [-0.17, 0.17]) {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), dark);
       eye.position.set(x, 2.12, -0.45);
-      root.add(eye);
+      visual.add(eye);
     }
 
     const hunterMark = new THREE.Group();
@@ -1123,6 +1129,8 @@ export class WorldRenderer {
       paintSurfaces,
       strokes: this.pendingPaint.get(state.id) ?? [],
       procedural: true,
+      visual,
+      visualBasePosition: new THREE.Vector3(),
       body,
       head,
       leftArm,
@@ -1260,6 +1268,28 @@ export class WorldRenderer {
     avatar.bodyPitchApplied = pitch;
   }
 
+  private updateAttachedVisualOffset(avatar: Avatar, dt: number): void {
+    if (!avatar.visual || !avatar.visualBasePosition) return;
+    this.attachedVisualTarget.copy(avatar.visualBasePosition);
+    const cling = avatar.state.cling;
+    if (cling) {
+      const normalLength = Math.hypot(cling.normalX, cling.normalZ);
+      if (normalLength > Number.EPSILON) {
+        this.attachedVisualOffset.set(
+          -cling.normalX / normalLength * CLING_VISUAL_INSET,
+          0,
+          -cling.normalZ / normalLength * CLING_VISUAL_INSET
+        );
+        this.attachedVisualOffset.applyAxisAngle(WORLD_UP, -avatar.root.rotation.y);
+        this.attachedVisualTarget.add(this.attachedVisualOffset);
+      }
+    }
+    avatar.visual.position.lerp(
+      this.attachedVisualTarget,
+      1 - Math.exp(-CLING_VISUAL_RESPONSE * dt)
+    );
+  }
+
   private clearAvatarBodyPitch(avatar: Avatar): void {
     const applied = avatar.bodyPitchApplied ?? 0;
     if (applied === 0) return;
@@ -1319,6 +1349,7 @@ export class WorldRenderer {
         : this.remoteAvatarYaw(avatar);
       const yawResponse = 1 - Math.exp(-(id === this.selfId ? LOCAL_TURN_RESPONSE : REMOTE_TURN_RESPONSE) * dt);
       avatar.root.rotation.y += shortestAngle(avatar.root.rotation.y, desiredYaw) * yawResponse;
+      this.updateAttachedVisualOffset(avatar, dt);
       this.clearAvatarBodyPitch(avatar);
       const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
       const displayPose = avatar.state.pose;
@@ -1820,6 +1851,9 @@ function shortestAngle(from: number, to: number): number {
 
 const PAINT_TEXTURE_SIZE = 1024;
 const CHARACTER_HEIGHT = 2.45;
+const CLING_VISUAL_INSET = 0.26;
+const CLING_VISUAL_RESPONSE = 24;
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const CAMERA_COLLISION_RADIUS = 0.34;
 const CAMERA_COLLISION_BUFFER = 0.18;
 const CAMERA_COLLISION_SEARCH_STEPS = 8;

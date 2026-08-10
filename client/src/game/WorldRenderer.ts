@@ -305,7 +305,7 @@ export class WorldRenderer {
       avatar.root.visible = player.alive;
       avatar.hunterMark.visible = player.role === "hunter";
       avatar.weapon.visible = player.role === "hunter" && player.alive;
-      this.setPose(avatar, isAttachedMovement(player) ? "stand" : player.pose);
+      this.setPose(avatar, player.pose);
     }
   }
 
@@ -1321,8 +1321,7 @@ export class WorldRenderer {
       avatar.root.rotation.y += shortestAngle(avatar.root.rotation.y, desiredYaw) * yawResponse;
       this.clearAvatarBodyPitch(avatar);
       const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
-      const attachedMoving = isAttachedMovement(avatar.state);
-      const displayPose = attachedMoving ? "stand" : avatar.state.pose;
+      const displayPose = avatar.state.pose;
       const moving = avatar.state.cling === undefined && planarSpeed > 0.3;
       const canBodyPitch = id === this.selfId
         && avatar.state.cling === undefined
@@ -1817,11 +1816,6 @@ function roundPaintValue(value: number): number {
 
 function shortestAngle(from: number, to: number): number {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
-}
-
-function isAttachedMovement(state: PlayerState): boolean {
-  return state.cling !== undefined
-    && Math.hypot(state.velocity.x, state.velocity.y, state.velocity.z) > 0.3;
 }
 
 const PAINT_TEXTURE_SIZE = 1024;

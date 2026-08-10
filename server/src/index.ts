@@ -14,6 +14,8 @@ import {
   type OpenLobbyListResponse
 } from "@mechfall/shared";
 import { RoomManager } from "./matchmaking/RoomManager.js";
+import { isLocalMapMakerRequest, isMapMakerPublishingRuntime } from "./mapMakerAccess.js";
+import { publishMapModel, publishMapToGame } from "./mapMakerPublisher.js";
 
 const port = Number(process.env.PORT ?? 3001);
 const host = process.env.HOST ?? "0.0.0.0";
@@ -23,6 +25,47 @@ const rooms = new RoomManager();
 const sockets = new WebSocketServer({ noServer: true, maxPayload: MAX_GAME_PACKET_BYTES });
 
 app.disable("x-powered-by");
+const sourceWorkspaceRoot = (): string => path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const mapMakerPublishingEnabled = isMapMakerPublishingRuntime(import.meta.url, process.env.NODE_ENV);
+
+if (mapMakerPublishingEnabled) {
+  app.post("/api/mapmaker/model", express.raw({ type: "application/octet-stream", limit: "64mb" }), async (request, response) => {
+    if (!isLocalMapMakerRequest(request.socket.remoteAddress, request.header("x-forwarded-for"))) {
+      response.status(403).json({ error: "Adding maps is only available from the local map maker." });
+      return;
+    }
+    try {
+      const workspaceRoot = sourceWorkspaceRoot();
+      if (!existsSync(path.join(workspaceRoot, "shared", "src", "game", "world.ts"))) {
+        response.status(409).json({ error: "The project source folder was not found. Run the map maker from the local project." });
+        return;
+      }
+      if (!Buffer.isBuffer(request.body)) throw new Error("The model upload was empty.");
+      const result = await publishMapModel(workspaceRoot, request.query.mapName, request.query.fileName, request.body);
+      response.json({ ok: true, url: result.url });
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : "Could not copy the model." });
+    }
+  });
+
+  app.post("/api/mapmaker/add-to-game", express.json({ limit: "20mb" }), async (request, response) => {
+    if (!isLocalMapMakerRequest(request.socket.remoteAddress, request.header("x-forwarded-for"))) {
+      response.status(403).json({ error: "Adding maps is only available from the local map maker." });
+      return;
+    }
+    try {
+      const workspaceRoot = sourceWorkspaceRoot();
+      if (!existsSync(path.join(workspaceRoot, "shared", "src", "game", "world.ts"))) {
+        response.status(409).json({ error: "The project source folder was not found. Run the map maker from the local project." });
+        return;
+      }
+      const result = await publishMapToGame(workspaceRoot, request.body);
+      response.json({ ok: true, mapName: result.mapName });
+    } catch (error) {
+      response.status(400).json({ error: error instanceof Error ? error.message : "Could not add the map." });
+    }
+  });
+}
 app.use(express.json({ limit: "4kb" }));
 
 app.get("/health", (_request, response) => response.json({ ok: true }));

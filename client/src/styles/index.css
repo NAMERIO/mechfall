@@ -198,6 +198,13 @@ body.mapmaker-page .mapmaker-panel button:disabled {
   transform: none;
 }
 
+body.mapmaker-page .mapmaker-publish #mm-add-to-game {
+  border-color: #ff9a72;
+  background: #c9563f;
+  color: #fff8e8;
+  font-weight: 900;
+}
+
 body.mapmaker-page .mapmaker-import button.active {
   border-color: var(--teal);
   background: rgba(87, 185, 169, 0.22);
@@ -209,6 +216,7 @@ body.mapmaker-page .mapmaker-fields select,
 body.mapmaker-page .mapmaker-world input,
 body.mapmaker-page .mapmaker-import input,
 body.mapmaker-page .mapmaker-import select,
+body.mapmaker-page .mapmaker-publish input,
 body.mapmaker-page .mapmaker-panel textarea {
   width: 100%;
   margin-top: 6px;
@@ -221,7 +229,8 @@ body.mapmaker-page .mapmaker-panel textarea {
 
 body.mapmaker-page .mapmaker-fields input,
 body.mapmaker-page .mapmaker-fields select,
-body.mapmaker-page .mapmaker-world input {
+body.mapmaker-page .mapmaker-world input,
+body.mapmaker-page .mapmaker-publish input {
   height: 33px;
   padding: 0 8px;
 }

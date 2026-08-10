@@ -4,7 +4,7 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      "/api": "http://localhost:3001",
+      "/api": { target: "http://localhost:3001", xfwd: true },
       "/health": "http://localhost:3001",
       "/play": { target: "ws://localhost:3001", ws: true }
     }
@@ -14,4 +14,3 @@ export default defineConfig({
     sourcemap: true
   }
 });
-

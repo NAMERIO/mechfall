@@ -3,7 +3,19 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
-import { WORLD_BOXES, WORLD_HULLS, WORLD_SIZE, convexHull2D, worldHullHeightAt, type WorldBox, type WorldHull } from "@mechfall/shared";
+import {
+  WORLD_BORDER_COLOR,
+  WORLD_BOXES,
+  WORLD_FLOOR_COLOR,
+  WORLD_HULLS,
+  WORLD_MODEL,
+  WORLD_NAME,
+  WORLD_SIZE,
+  convexHull2D,
+  worldHullHeightAt,
+  type WorldBox,
+  type WorldHull
+} from "@mechfall/shared";
 
 type BoxKind = WorldBox["kind"];
 type EditableBox = {
@@ -43,6 +55,7 @@ type EditorSnapshot = {
     scale: [number, number, number];
   }>;
   asset?: THREE.Group;
+  assetFile?: File;
   assetTransform?: { position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number] };
   selectedType?: "box" | "hull" | "asset";
   selectedId?: string;
@@ -62,8 +75,8 @@ const MOVE_SPEED = 6;
 const SELECTED_MOVE_SPEED = 7;
 const SELECTED_MOVE_FAST_MULTIPLIER = 3;
 const SELECTED_MOVE_VERTICAL_SPEED = 4;
-const DEFAULT_FLOOR_COLOR = "#2b3838";
-const DEFAULT_BORDER_COLOR = "#de704e";
+const DEFAULT_FLOOR_COLOR = WORLD_FLOOR_COLOR;
+const DEFAULT_BORDER_COLOR = WORLD_BORDER_COLOR;
 const FLOOR_SNAP_DISTANCE = 0.45;
 const ASSET_SCALE_STEP = 0.1;
 const MIN_ASSET_SCALE = 0.02;
@@ -137,6 +150,11 @@ document.body.innerHTML = `
         <button id="mm-test-toggle" type="button">TEST COLLISION: OFF</button>
         <small>When test is off, WASD moves selected items. Q/E moves up/down. Red = blocked.</small>
       </section>
+      <section class="mapmaker-publish">
+        <label>MAP NAME <input id="mm-map-name" maxlength="60" value="${escapeHtml(WORLD_NAME)}" /></label>
+        <button id="mm-add-to-game" type="button">ADD TO GAME</button>
+        <small>Saves this as the active game map, including collision, colors, transforms, and the imported model file.</small>
+      </section>
       <section>
         <label>IMPORT EXPORTED JSON</label>
         <textarea id="mm-import-text" spellcheck="false" placeholder='Paste [{"id":"box","position":[0,1,0],"size":[2,2,2],...}]'></textarea>
@@ -186,6 +204,7 @@ document.body.innerHTML = `
 
 const host = element<HTMLDivElement>("#mm-canvas-host");
 const status = element<HTMLElement>("#mm-status");
+const mapNameInput = element<HTMLInputElement>("#mm-map-name");
 const boxList = element<HTMLDivElement>("#mm-box-list");
 const exportText = element<HTMLTextAreaElement>("#mm-export-text");
 const selectedTitle = element<HTMLElement>("#mm-selected-title");
@@ -290,6 +309,7 @@ let hulls: EditableHull[] = [];
 let selectedHull: EditableHull | undefined;
 let selectedAsset: THREE.Object3D | undefined;
 let importedModel: THREE.Group | undefined;
+let importedModelFile: File | undefined;
 let testMode = false;
 let collisionEditMode = false;
 let restoringUndo = false;
@@ -301,6 +321,7 @@ scene.add(testPlayer);
 loadBoxes(WORLD_BOXES.map(boxToEditableInput));
 for (const hull of WORLD_HULLS) addHull(worldHullToEditableInput(hull));
 exportJson();
+if (WORLD_MODEL) void loadActiveGameModel();
 
 element<HTMLButtonElement>("#mm-add-box").addEventListener("click", () => {
   checkpointUndo();
@@ -374,6 +395,7 @@ element<HTMLButtonElement>("#mm-test-toggle").addEventListener("click", () => {
   element<HTMLButtonElement>("#mm-test-toggle").textContent = `TEST COLLISION: ${testMode ? "ON" : "OFF"}`;
   testPlayer.visible = testMode;
 });
+element<HTMLButtonElement>("#mm-add-to-game").addEventListener("click", () => void addMapToGame());
 element<HTMLInputElement>("#mm-model-file").addEventListener("change", (event) => {
   const input = event.currentTarget as HTMLInputElement;
   void importModel(input.files?.[0]).finally(() => {
@@ -482,6 +504,7 @@ function captureEditorSnapshot(): EditorSnapshot {
       scale: roundTuple([hull.mesh.scale.x, hull.mesh.scale.y, hull.mesh.scale.z])
     })),
     asset: importedModel,
+    assetFile: importedModelFile,
     assetTransform: importedModel ? assetToExport(importedModel) : undefined,
     selectedType,
     selectedId: selected?.id ?? selectedHull?.id
@@ -504,6 +527,7 @@ function undoLastChange(): void {
     for (const hull of [...hulls]) removeEditableHull(hull);
     if (importedModel && importedModel !== snapshot.asset) scene.remove(importedModel);
     importedModel = snapshot.asset;
+    importedModelFile = snapshot.assetFile;
     if (importedModel && snapshot.assetTransform) {
       scene.add(importedModel);
       importedModel.position.set(...snapshot.assetTransform.position);
@@ -611,6 +635,7 @@ function resetDefaultMap(): void {
   loadBoxes(WORLD_BOXES.map(boxToEditableInput));
   loadHulls(WORLD_HULLS.map(worldHullToEditableInput));
   status.textContent = "Loaded the current game map.";
+  void loadActiveGameModel();
 }
 
 function addBox(input: Omit<EditableBox, "mesh" | "edges">): EditableBox {
@@ -1114,6 +1139,7 @@ function deleteSelected(): void {
     if (selectedAsset === importedModel) {
       clearModelCollision(false);
       importedModel = undefined;
+      importedModelFile = undefined;
     }
     scene.remove(selectedAsset);
     selectedAsset = undefined;
@@ -1211,6 +1237,7 @@ async function importModel(file: File | undefined): Promise<void> {
     selectAsset(candidate);
     const result = rebuildSmartModelCollision(true);
     if (!result?.created) throw new Error("the model does not contain usable triangle geometry");
+    importedModelFile = file;
     status.textContent = result.optimized
       ? `Loaded ${file.name}. Its ${result.sourceTriangles.toLocaleString()} visual triangles were reduced to one smooth ${result.triangles.length.toLocaleString()}-triangle game collision mesh.`
       : `Loaded ${file.name} with one exact ${result.triangles.length.toLocaleString()}-triangle collision mesh.`;
@@ -1220,6 +1247,7 @@ async function importModel(file: File | undefined): Promise<void> {
       scene.remove(candidate);
       disposeObject(candidate);
       importedModel = undefined;
+      importedModelFile = undefined;
       selectedAsset = undefined;
       transform.detach();
       fillFields(undefined);
@@ -1228,6 +1256,39 @@ async function importModel(file: File | undefined): Promise<void> {
     status.textContent = `Could not load model: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
     URL.revokeObjectURL(url);
+  }
+}
+
+async function loadActiveGameModel(): Promise<void> {
+  if (!WORLD_MODEL) {
+    if (importedModel) {
+      clearModelCollision(false);
+      scene.remove(importedModel);
+      disposeObject(importedModel);
+      importedModel = undefined;
+      importedModelFile = undefined;
+      selectedAsset = undefined;
+    }
+    return;
+  }
+  try {
+    status.textContent = `Loading active game model...`;
+    const response = await fetch(WORLD_MODEL.url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`model file returned ${response.status}`);
+    const blob = await response.blob();
+    const fileName = WORLD_MODEL.url.split("/").at(-1) || "map-model.glb";
+    await importModel(new File([blob], fileName, { type: blob.type || "model/gltf-binary" }));
+    if (!importedModel) throw new Error("the saved model could not be imported");
+    importedModel.position.set(...WORLD_MODEL.position);
+    importedModel.rotation.set(...WORLD_MODEL.rotation);
+    importedModel.scale.set(...WORLD_MODEL.scale);
+    importedModel.updateMatrixWorld(true);
+    setUniformScaleReference(importedModel);
+    selectAsset(importedModel);
+    exportJson();
+    status.textContent = `Loaded active game map: ${WORLD_NAME}.`;
+  } catch (error) {
+    status.textContent = `Loaded collision, but the active map model failed: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
 
@@ -1439,6 +1500,7 @@ function buildSmoothModelCollision(
 
 function exportJson(): void {
   exportText.value = JSON.stringify({
+    mapName: mapNameInput.value.trim() || WORLD_NAME,
     worldSize,
     floorColor,
     borderColor,
@@ -1460,6 +1522,65 @@ function exportCode(): void {
   exportText.value = `export const WORLD_SIZE = ${formatNumber(worldSize)};\nexport const WORLD_WALL_THICKNESS = 1;\n// Map maker floor color: ${floorColor}\n\nexport const WORLD_BOXES: readonly WorldBox[] = [\n${lines.join("\n")}\n] as const;\n\nexport const WORLD_HULLS: readonly WorldHull[] = [\n${hullLines.join("\n")}\n] as const;`;
 }
 
+async function addMapToGame(): Promise<void> {
+  const button = element<HTMLButtonElement>("#mm-add-to-game");
+  const mapName = mapNameInput.value.trim();
+  if (!mapName) {
+    status.textContent = "Enter a map name before adding it to the game.";
+    mapNameInput.focus();
+    return;
+  }
+  if (importedModel && !importedModelFile) {
+    status.textContent = "Re-import the model GLB before adding this map so its model file can be copied into the game.";
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "ADDING MAP...";
+  status.textContent = `Adding ${mapName} to the game...`;
+  try {
+    let model: { url: string; transform: ReturnType<typeof assetToExport> } | undefined;
+    if (importedModel && importedModelFile) {
+      const modelQuery = new URLSearchParams({ mapName, fileName: importedModelFile.name });
+      const modelResponse = await fetch(`/api/mapmaker/model?${modelQuery}`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: importedModelFile
+      });
+      const modelResult = await modelResponse.json().catch(() => ({})) as { ok?: boolean; error?: string; url?: string };
+      if (!modelResponse.ok || !modelResult.ok || !modelResult.url) {
+        throw new Error(modelResult.error || `Model upload returned ${modelResponse.status}`);
+      }
+      model = { url: modelResult.url, transform: assetToExport(importedModel) };
+    }
+    const response = await fetch("/api/mapmaker/add-to-game", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        mapName,
+        worldSize,
+        floorColor,
+        borderColor,
+        boxes: boxes.map(boxToEditableInput),
+        hulls: hulls.map(hullToWorldHull),
+        model
+      })
+    });
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; mapName?: string };
+    if (!response.ok || !result.ok) throw new Error(result.error || `Server returned ${response.status}`);
+    button.textContent = "ADDED TO GAME";
+    status.textContent = `${result.mapName ?? mapName} is now the active game map. Reload the game; restart the dev server if an existing match still has the old physics.`;
+    window.setTimeout(() => {
+      button.textContent = "ADD TO GAME";
+      button.disabled = false;
+    }, 2200);
+  } catch (error) {
+    button.textContent = "ADD TO GAME";
+    button.disabled = false;
+    status.textContent = `Could not add map: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 function importBoxesFromText(): void {
   try {
     const parsed = JSON.parse(element<HTMLTextAreaElement>("#mm-import-text").value) as unknown;
@@ -1474,7 +1595,8 @@ function importBoxesFromText(): void {
     if (!rawBoxes) throw new Error("Expected an array or { boxes: [...], hulls: [...] }");
 
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const payload = parsed as { worldSize?: unknown; floorColor?: unknown; borderColor?: unknown };
+      const payload = parsed as { mapName?: unknown; worldSize?: unknown; floorColor?: unknown; borderColor?: unknown };
+      if (typeof payload.mapName === "string") mapNameInput.value = payload.mapName.slice(0, 60);
       if (Number.isFinite(Number(payload.worldSize))) worldInputs.size.value = String(payload.worldSize);
       if (typeof payload.floorColor === "string") worldInputs.floorColor.value = payload.floorColor;
       if (typeof payload.borderColor === "string") worldInputs.borderColor.value = payload.borderColor;
@@ -1718,6 +1840,8 @@ function worldHullToEditableInput(hull: WorldHull): Omit<EditableHull, "mesh" | 
     color: hull.color,
     kind: "hull",
     solid: hull.solid,
+    generatedFrom: hull.visible === false ? "model" : undefined,
+    linkedToModel: hull.visible === false,
     initialPosition: roundTuple([center.x, center.y, center.z])
   };
 }
@@ -1757,7 +1881,8 @@ function hullToWorldHull(hull: EditableHull): WorldHull {
     triangles: hull.triangles.map((triangle) => [...triangle] as [number, number, number]),
     color: hull.color,
     kind: "hull",
-    solid: hull.solid
+    solid: hull.solid,
+    visible: hull.generatedFrom === "model" ? false : undefined
   };
 }
 

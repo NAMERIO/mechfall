@@ -4,8 +4,10 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
   GAME,
+  WORLD_FLOOR_COLOR,
   WORLD_BOXES,
   WORLD_HULLS,
+  WORLD_MODEL,
   WORLD_SIZE,
   worldHullHeightAt,
   worldHullFootprint,
@@ -597,15 +599,15 @@ export class WorldRenderer {
   private buildWorld(): void {
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
-      new THREE.MeshStandardMaterial({ color: "#c8b899", roughness: 0.92, metalness: 0 })
+      new THREE.MeshStandardMaterial({ color: WORLD_FLOOR_COLOR, roughness: 0.92, metalness: 0 })
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
-    floor.userData.sampleColor = "#c8b899";
+    floor.userData.sampleColor = WORLD_FLOOR_COLOR;
     this.sampleSurfaces.push(floor);
     this.scene.add(floor);
 
-    const grid = new THREE.GridHelper(WORLD_SIZE, 42, "#8f846f", "#a99d83");
+    const grid = new THREE.GridHelper(WORLD_SIZE, Math.max(8, Math.round(WORLD_SIZE)), "#8f846f", "#a99d83");
     grid.position.y = 0.008;
     const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
     for (const material of materials) {
@@ -613,19 +615,6 @@ export class WorldRenderer {
       material.transparent = true;
     }
     this.scene.add(grid);
-
-    const zoneGeometry = new THREE.PlaneGeometry(7, 5);
-    for (const [x, z, color, rotation] of [
-      [-13, -5, "#d9694d", -0.15], [9, 13, "#4d9f92", 0.1], [9, -15, "#d8ae44", -0.08], [-5, 15, "#7571a4", 0.18]
-    ] as const) {
-      const zone = new THREE.Mesh(zoneGeometry, new THREE.MeshStandardMaterial({ color, roughness: 0.95 }));
-      zone.rotation.set(-Math.PI / 2, 0, rotation);
-      zone.position.set(x, 0.012, z);
-      zone.receiveShadow = true;
-      zone.userData.sampleColor = color;
-      this.sampleSurfaces.push(zone);
-      this.scene.add(zone);
-    }
 
     for (const box of WORLD_BOXES) {
       const geometry = new THREE.BoxGeometry(...box.size);
@@ -641,7 +630,7 @@ export class WorldRenderer {
     }
 
     for (const hull of WORLD_HULLS) {
-      if (hull.vertices.length < 4) continue;
+      if (hull.vertices.length < 4 || hull.visible === false) continue;
       const geometry = hull.triangles?.length
         ? new THREE.BufferGeometry()
         : new ConvexGeometry(hull.vertices.map((vertex) => new THREE.Vector3(...vertex)));
@@ -663,7 +652,38 @@ export class WorldRenderer {
       ));
     }
 
-    this.addFactoryDetails();
+    void this.loadWorldModel();
+  }
+
+  private async loadWorldModel(): Promise<void> {
+    if (!WORLD_MODEL) return;
+    try {
+      const gltf = await new GLTFLoader().loadAsync(WORLD_MODEL.url);
+      const root = new THREE.Group();
+      const visual = gltf.scene;
+      root.add(visual);
+      root.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(root);
+      if (bounds.isEmpty()) throw new Error("The map model contains no visible geometry.");
+      visual.position.sub(bounds.getCenter(new THREE.Vector3()));
+      root.position.set(...WORLD_MODEL.position);
+      root.rotation.set(...WORLD_MODEL.rotation);
+      root.scale.set(...WORLD_MODEL.scale);
+      root.updateMatrixWorld(true);
+      root.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        child.castShadow = true;
+        child.receiveShadow = true;
+        const material = Array.isArray(child.material) ? child.material[0] : child.material;
+        if (material && "color" in material && material.color instanceof THREE.Color) {
+          child.userData.sampleColor = `#${material.color.getHexString()}`;
+        }
+        this.sampleSurfaces.push(child);
+      });
+      this.scene.add(root);
+    } catch (error) {
+      console.warn("The active map model failed to load.", error);
+    }
   }
 
   private addBoxDetails(mesh: THREE.Mesh, kind: string): void {

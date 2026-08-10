@@ -3,7 +3,7 @@ import {
   GENERATED_FLOOR_COLOR,
   GENERATED_WORLD_BOXES,
   GENERATED_WORLD_HULLS,
-  GENERATED_WORLD_MODEL,
+  GENERATED_WORLD_MODELS,
   GENERATED_WORLD_NAME,
   GENERATED_WORLD_SIZE
 } from "./generatedWorld.ts";
@@ -27,9 +27,12 @@ export interface WorldHull {
   solid: boolean;
   /** False for collision supplied by a visible imported map model. */
   visible?: boolean;
+  /** ID of the visible model this collision mesh follows. */
+  modelId?: string;
 }
 
 export interface WorldModel {
+  id: string;
   url: string;
   position: readonly [number, number, number];
   rotation: readonly [number, number, number];
@@ -47,7 +50,7 @@ export const WORLD_SIZE = GENERATED_WORLD_SIZE;
 export const WORLD_WALL_THICKNESS = 1;
 export const WORLD_FLOOR_COLOR = GENERATED_FLOOR_COLOR;
 export const WORLD_BORDER_COLOR = GENERATED_BORDER_COLOR;
-export const WORLD_MODEL = GENERATED_WORLD_MODEL;
+export const WORLD_MODELS: readonly WorldModel[] = GENERATED_WORLD_MODELS;
 export const WORLD_BOXES: readonly WorldBox[] = GENERATED_WORLD_BOXES;
 export const WORLD_HULLS: readonly WorldHull[] = GENERATED_WORLD_HULLS;
 

@@ -7,7 +7,7 @@ import {
   WORLD_FLOOR_COLOR,
   WORLD_BOXES,
   WORLD_HULLS,
-  WORLD_MODEL,
+  WORLD_MODELS,
   WORLD_SIZE,
   worldHullHeightAt,
   worldHullFootprint,
@@ -680,7 +680,7 @@ export class WorldRenderer {
       ));
     }
 
-    void this.loadWorldModel();
+    void this.loadWorldModels();
   }
 
   private addCollisionDebugShape(geometry: THREE.BufferGeometry, position?: THREE.Vector3): void {
@@ -693,10 +693,10 @@ export class WorldRenderer {
     this.collisionDebugRoot.add(debugMesh);
   }
 
-  private async loadWorldModel(): Promise<void> {
-    if (!WORLD_MODEL) return;
-    try {
-      const gltf = await new GLTFLoader().loadAsync(WORLD_MODEL.url);
+  private async loadWorldModels(): Promise<void> {
+    for (const worldModel of WORLD_MODELS) {
+      try {
+        const gltf = await new GLTFLoader().loadAsync(worldModel.url);
       const root = new THREE.Group();
       const visual = gltf.scene;
       root.add(visual);
@@ -704,9 +704,9 @@ export class WorldRenderer {
       const bounds = new THREE.Box3().setFromObject(root);
       if (bounds.isEmpty()) throw new Error("The map model contains no visible geometry.");
       visual.position.sub(bounds.getCenter(new THREE.Vector3()));
-      root.position.set(...WORLD_MODEL.position);
-      root.rotation.set(...WORLD_MODEL.rotation);
-      root.scale.set(...WORLD_MODEL.scale);
+        root.position.set(...worldModel.position);
+        root.rotation.set(...worldModel.rotation);
+        root.scale.set(...worldModel.scale);
       root.updateMatrixWorld(true);
       root.traverse((child) => {
         if (!(child instanceof THREE.Mesh)) return;
@@ -718,9 +718,10 @@ export class WorldRenderer {
         }
         this.sampleSurfaces.push(child);
       });
-      this.scene.add(root);
-    } catch (error) {
-      console.warn("The active map model failed to load.", error);
+        this.scene.add(root);
+      } catch (error) {
+        console.warn(`The active map model ${worldModel.id} failed to load.`, error);
+      }
     }
   }
 

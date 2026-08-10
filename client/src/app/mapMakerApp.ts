@@ -8,7 +8,7 @@ import {
   WORLD_BOXES,
   WORLD_FLOOR_COLOR,
   WORLD_HULLS,
-  WORLD_MODEL,
+  WORLD_MODELS,
   WORLD_NAME,
   WORLD_SIZE,
   convexHull2D,
@@ -29,6 +29,11 @@ type EditableBox = {
   edges: THREE.LineSegments;
 };
 type TransformMode = "translate" | "rotate" | "scale";
+type ImportedAsset = {
+  id: string;
+  model: THREE.Group;
+  file: File;
+};
 type EditableHull = {
   id: string;
   localVertices: [number, number, number][];
@@ -42,6 +47,7 @@ type EditableHull = {
   optimizedFromModel?: boolean;
   initialPosition?: [number, number, number];
   linkedToModel?: boolean;
+  linkedAssetId?: string;
 };
 type EditorSnapshot = {
   worldSize: number;
@@ -54,9 +60,10 @@ type EditorSnapshot = {
     rotation: [number, number, number];
     scale: [number, number, number];
   }>;
-  asset?: THREE.Group;
-  assetFile?: File;
-  assetTransform?: { position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number] };
+  assets: Array<{
+    asset: ImportedAsset;
+    transform: { position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number] };
+  }>;
   selectedType?: "box" | "hull" | "asset";
   selectedId?: string;
 };
@@ -309,9 +316,8 @@ let boxes: EditableBox[] = [];
 let selected: EditableBox | undefined;
 let hulls: EditableHull[] = [];
 let selectedHull: EditableHull | undefined;
-let selectedAsset: THREE.Object3D | undefined;
-let importedModel: THREE.Group | undefined;
-let importedModelFile: File | undefined;
+let selectedAsset: THREE.Group | undefined;
+let importedAssets: ImportedAsset[] = [];
 let testMode = false;
 let collisionEditMode = false;
 let restoringUndo = false;
@@ -323,7 +329,7 @@ scene.add(testPlayer);
 loadBoxes(WORLD_BOXES.map(boxToEditableInput));
 for (const hull of WORLD_HULLS) addHull(worldHullToEditableInput(hull));
 exportJson();
-if (WORLD_MODEL) void loadActiveGameModel();
+if (WORLD_MODELS.length) void loadActiveGameModels();
 
 element<HTMLButtonElement>("#mm-add-box").addEventListener("click", () => {
   checkpointUndo();
@@ -436,12 +442,12 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
       return;
     }
   } else {
-    if (importedModel) {
-      const assetHit = raycaster.intersectObjects(getModelMeshes(importedModel), false)[0];
-      if (assetHit) {
-        selectAsset(importedModel);
-        return;
-      }
+    const modelMeshes = importedAssets.flatMap((asset) => getModelMeshes(asset.model));
+    const assetHit = raycaster.intersectObjects(modelMeshes, false)[0];
+    if (assetHit) {
+      const asset = importedAssets.find((candidate) => getModelMeshes(candidate.model).includes(assetHit.object as THREE.Mesh));
+      if (asset) selectAsset(asset.model);
+      return;
     }
     const boxHit = raycaster.intersectObjects(boxes.map((box) => box.mesh), false)[0];
     if (boxHit) {
@@ -486,6 +492,14 @@ function element<T extends HTMLElement>(selector: string): T {
   return found;
 }
 
+function importedAssetForModel(model: THREE.Object3D | undefined): ImportedAsset | undefined {
+  return model ? importedAssets.find((asset) => asset.model === model) : undefined;
+}
+
+function linkedAssetForHull(hull: EditableHull | undefined): ImportedAsset | undefined {
+  return hull?.linkedAssetId ? importedAssets.find((asset) => asset.id === hull.linkedAssetId) : undefined;
+}
+
 function checkpointUndo(): void {
   if (restoringUndo) return;
   undoStack.push(captureEditorSnapshot());
@@ -505,11 +519,9 @@ function captureEditorSnapshot(): EditorSnapshot {
       rotation: roundTuple([hull.mesh.rotation.x, hull.mesh.rotation.y, hull.mesh.rotation.z]),
       scale: roundTuple([hull.mesh.scale.x, hull.mesh.scale.y, hull.mesh.scale.z])
     })),
-    asset: importedModel,
-    assetFile: importedModelFile,
-    assetTransform: importedModel ? assetToExport(importedModel) : undefined,
+    assets: importedAssets.map((asset) => ({ asset, transform: assetToExport(asset.model) })),
     selectedType,
-    selectedId: selected?.id ?? selectedHull?.id
+    selectedId: selected?.id ?? selectedHull?.id ?? importedAssetForModel(selectedAsset)?.id
   };
 }
 
@@ -527,15 +539,16 @@ function undoLastChange(): void {
     applyWorldSettings();
     for (const box of [...boxes]) removeEditableBox(box);
     for (const hull of [...hulls]) removeEditableHull(hull);
-    if (importedModel && importedModel !== snapshot.asset) scene.remove(importedModel);
-    importedModel = snapshot.asset;
-    importedModelFile = snapshot.assetFile;
-    if (importedModel && snapshot.assetTransform) {
-      scene.add(importedModel);
-      importedModel.position.set(...snapshot.assetTransform.position);
-      importedModel.rotation.set(...snapshot.assetTransform.rotation);
-      importedModel.scale.set(...snapshot.assetTransform.scale);
-      importedModel.updateMatrixWorld(true);
+    for (const current of importedAssets) {
+      if (!snapshot.assets.some(({ asset }) => asset === current)) scene.remove(current.model);
+    }
+    importedAssets = snapshot.assets.map(({ asset }) => asset);
+    for (const { asset, transform: assetTransform } of snapshot.assets) {
+      scene.add(asset.model);
+      asset.model.position.set(...assetTransform.position);
+      asset.model.rotation.set(...assetTransform.rotation);
+      asset.model.scale.set(...assetTransform.scale);
+      asset.model.updateMatrixWorld(true);
     }
     for (const input of snapshot.boxes) addBox(input);
     for (const hullSnapshot of snapshot.hulls) {
@@ -545,7 +558,7 @@ function undoLastChange(): void {
       hull.mesh.scale.set(...hullSnapshot.scale);
       hull.mesh.updateMatrixWorld(true);
     }
-    if (snapshot.selectedType === "asset" && importedModel) selectAsset(importedModel);
+    if (snapshot.selectedType === "asset") selectAsset(importedAssets.find((asset) => asset.id === snapshot.selectedId)?.model);
     else if (snapshot.selectedType === "hull") selectHull(hulls.find((hull) => hull.id === snapshot.selectedId));
     else if (snapshot.selectedType === "box") selectBox(boxes.find((box) => box.id === snapshot.selectedId));
     else selectBox(undefined);
@@ -637,7 +650,7 @@ function resetDefaultMap(): void {
   loadBoxes(WORLD_BOXES.map(boxToEditableInput));
   loadHulls(WORLD_HULLS.map(worldHullToEditableInput));
   status.textContent = "Loaded the current game map.";
-  void loadActiveGameModel();
+  void loadActiveGameModels();
 }
 
 function addBox(input: Omit<EditableBox, "mesh" | "edges">): EditableBox {
@@ -687,7 +700,8 @@ function addHull(input: Omit<EditableHull, "mesh" | "edges">): EditableHull {
   mesh.add(edges);
   const hull: EditableHull = { ...input, mesh, edges };
   hulls.push(hull);
-  if (input.linkedToModel && importedModel) importedModel.add(mesh);
+  const linkedAsset = input.linkedAssetId ? importedAssets.find((asset) => asset.id === input.linkedAssetId) : undefined;
+  if (input.linkedToModel && linkedAsset) linkedAsset.model.add(mesh);
   else scene.add(mesh);
   syncHullMesh(hull);
   renderList();
@@ -950,7 +964,8 @@ function selectBox(box: EditableBox | undefined): void {
 
 function selectHull(hull: EditableHull | undefined): void {
   if (hull?.linkedToModel && !collisionEditMode) {
-    if (importedModel) selectAsset(importedModel);
+    const linkedAsset = linkedAssetForHull(hull);
+    if (linkedAsset) selectAsset(linkedAsset.model);
     return;
   }
   selected = undefined;
@@ -971,21 +986,30 @@ function toggleCollisionEditMode(): void {
   button.classList.toggle("active", collisionEditMode);
   for (const hull of hulls) syncHullMesh(hull);
   if (collisionEditMode) {
-    const linked = hulls.find((hull) => hull.linkedToModel);
+    const selectedAssetId = importedAssetForModel(selectedAsset)?.id;
+    const linked = hulls.find((hull) => hull.linkedAssetId === selectedAssetId) ?? hulls.find((hull) => hull.linkedToModel);
     if (linked) selectHull(linked);
     status.textContent = "Collision-only editing is ON. Select the cyan triangle mesh to adjust or delete it.";
   } else {
-    if (importedModel) selectAsset(importedModel);
+    const linkedAsset = linkedAssetForHull(selectedHull);
+    if (linkedAsset) selectAsset(linkedAsset.model);
+    else if (importedAssets[0]) selectAsset(importedAssets[0].model);
     else if (selectedHull) selectHull(undefined);
     status.textContent = "Collision-only editing is OFF. The model and its collision now select and move as one item.";
   }
   renderList();
 }
 
-function selectAsset(asset: THREE.Object3D): void {
+function selectAsset(asset: THREE.Group | undefined): void {
   selected = undefined;
   selectedHull = undefined;
   selectedAsset = asset;
+  if (!asset) {
+    transform.detach();
+    fillFields(undefined, undefined);
+    renderList();
+    return;
+  }
   asset.userData.modelCollisionPosition ??= asset.position.clone();
   setUniformScaleReference(asset);
   transform.detach();
@@ -1072,13 +1096,13 @@ function applyFieldsToSelected(): void {
 
 function renderList(): void {
   boxList.innerHTML = "";
-  if (importedModel) {
+  for (const asset of importedAssets) {
     const assetButton = document.createElement("button");
     assetButton.type = "button";
-    assetButton.className = selectedAsset === importedModel ? "active mapmaker-asset-item" : "mapmaker-asset-item";
+    assetButton.className = selectedAsset === asset.model ? "active mapmaker-asset-item" : "mapmaker-asset-item";
     assetButton.disabled = collisionEditMode;
-    assetButton.innerHTML = `<strong>${escapeHtml(importedModel.name || "MODEL")}</strong><span>3D MODEL · ${collisionEditMode ? "DISABLE EDIT COLLISION TO SELECT" : "CLICK TO MOVE WITH COLLISION"}</span>`;
-    assetButton.addEventListener("click", () => selectAsset(importedModel!));
+    assetButton.innerHTML = `<strong>${escapeHtml(asset.model.name || "MODEL")}</strong><span>3D MODEL · ${collisionEditMode ? "DISABLE EDIT COLLISION TO SELECT" : "CLICK TO MOVE WITH COLLISION"}</span>`;
+    assetButton.addEventListener("click", () => selectAsset(asset.model));
     boxList.append(assetButton);
   }
   for (const hull of hulls) {
@@ -1138,15 +1162,14 @@ function deleteSelected(): void {
   if (!selectedAsset && !selectedHull && !selected) return;
   checkpointUndo();
   if (selectedAsset) {
-    if (selectedAsset === importedModel) {
-      clearModelCollision(false);
-      importedModel = undefined;
-      importedModelFile = undefined;
-    }
+    const asset = importedAssetForModel(selectedAsset);
+    if (asset) clearModelCollision(false, asset.id);
     scene.remove(selectedAsset);
+    if (asset) importedAssets = importedAssets.filter((candidate) => candidate !== asset);
     selectedAsset = undefined;
     transform.detach();
     fillFields(undefined);
+    renderList();
     status.textContent = "Deleted selected asset.";
     exportJson();
     return;
@@ -1206,7 +1229,10 @@ function loadHulls(inputs: Array<Omit<EditableHull, "mesh" | "edges">>): void {
   exportJson();
 }
 
-async function importModel(file: File | undefined): Promise<void> {
+async function importModel(
+  file: File | undefined,
+  options: { id?: string; transform?: { position: readonly [number, number, number]; rotation: readonly [number, number, number]; scale: readonly [number, number, number] }; loadingActive?: boolean } = {}
+): Promise<ImportedAsset | undefined> {
   if (!file) return;
   const lowerName = file.name.toLowerCase();
   if (lowerName.endsWith(".zip")) {
@@ -1223,33 +1249,40 @@ async function importModel(file: File | undefined): Promise<void> {
   }
   const url = URL.createObjectURL(file);
   let candidate: THREE.Group | undefined;
+  let asset: ImportedAsset | undefined;
   try {
     status.textContent = `Loading ${file.name}...`;
-    undoStack.length = 0;
+    if (!options.loadingActive) checkpointUndo();
     const gltf = await new GLTFLoader().loadAsync(url);
     candidate = normalizeImportedModel(gltf.scene, file.name);
-    if (importedModel) {
-      clearModelCollision(false);
-      scene.remove(importedModel);
-      disposeObject(importedModel);
-    }
-    importedModel = candidate;
+    asset = {
+      id: options.id ?? uniqueAssetId(file.name.replace(/\.[^.]+$/, "")),
+      model: candidate,
+      file
+    };
+    importedAssets.push(asset);
     scene.add(candidate);
-    snapAssetToFloor(candidate);
+    if (options.transform) {
+      candidate.position.set(...options.transform.position);
+      candidate.rotation.set(...options.transform.rotation);
+      candidate.scale.set(...options.transform.scale);
+      candidate.updateMatrixWorld(true);
+    } else {
+      snapAssetToFloor(candidate);
+    }
     selectAsset(candidate);
     const result = rebuildSmartModelCollision(true);
     if (!result?.created) throw new Error("the model does not contain usable triangle geometry");
-    importedModelFile = file;
     status.textContent = result.optimized
       ? `Loaded ${file.name}. Its ${result.sourceTriangles.toLocaleString()} visual triangles were reduced to one smooth ${result.triangles.length.toLocaleString()}-triangle game collision mesh.`
       : `Loaded ${file.name} with one exact ${result.triangles.length.toLocaleString()}-triangle collision mesh.`;
+    return asset;
   } catch (error) {
-    if (candidate && importedModel === candidate) {
-      clearModelCollision(false);
+    if (candidate && asset) {
+      clearModelCollision(false, asset.id);
       scene.remove(candidate);
       disposeObject(candidate);
-      importedModel = undefined;
-      importedModelFile = undefined;
+      importedAssets = importedAssets.filter((item) => item !== asset);
       selectedAsset = undefined;
       transform.detach();
       fillFields(undefined);
@@ -1261,37 +1294,39 @@ async function importModel(file: File | undefined): Promise<void> {
   }
 }
 
-async function loadActiveGameModel(): Promise<void> {
-  if (!WORLD_MODEL) {
-    if (importedModel) {
-      clearModelCollision(false);
-      scene.remove(importedModel);
-      disposeObject(importedModel);
-      importedModel = undefined;
-      importedModelFile = undefined;
-      selectedAsset = undefined;
+async function loadActiveGameModels(): Promise<void> {
+  for (const asset of importedAssets) {
+    scene.remove(asset.model);
+    disposeObject(asset.model);
+  }
+  importedAssets = [];
+  for (const hull of [...hulls]) {
+    if (hull.generatedFrom === "model") removeEditableHull(hull);
+  }
+  selectedAsset = undefined;
+  let loaded = 0;
+  for (const worldModel of WORLD_MODELS) {
+    try {
+      status.textContent = `Loading active game model ${loaded + 1}/${WORLD_MODELS.length}...`;
+      const response = await fetch(worldModel.url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`${worldModel.url} returned ${response.status}`);
+      const blob = await response.blob();
+      const fileName = worldModel.url.split("/").at(-1) || `${worldModel.id}.glb`;
+      const asset = await importModel(new File([blob], fileName, { type: blob.type || "model/gltf-binary" }), {
+        id: worldModel.id,
+        transform: worldModel,
+        loadingActive: true
+      });
+      if (asset) loaded += 1;
+    } catch (error) {
+      console.warn("Active map model failed to load.", error);
     }
-    return;
   }
-  try {
-    status.textContent = `Loading active game model...`;
-    const response = await fetch(WORLD_MODEL.url, { cache: "no-store" });
-    if (!response.ok) throw new Error(`model file returned ${response.status}`);
-    const blob = await response.blob();
-    const fileName = WORLD_MODEL.url.split("/").at(-1) || "map-model.glb";
-    await importModel(new File([blob], fileName, { type: blob.type || "model/gltf-binary" }));
-    if (!importedModel) throw new Error("the saved model could not be imported");
-    importedModel.position.set(...WORLD_MODEL.position);
-    importedModel.rotation.set(...WORLD_MODEL.rotation);
-    importedModel.scale.set(...WORLD_MODEL.scale);
-    importedModel.updateMatrixWorld(true);
-    setUniformScaleReference(importedModel);
-    selectAsset(importedModel);
-    exportJson();
-    status.textContent = `Loaded active game map: ${WORLD_NAME}.`;
-  } catch (error) {
-    status.textContent = `Loaded collision, but the active map model failed: ${error instanceof Error ? error.message : String(error)}`;
-  }
+  if (importedAssets[0]) selectAsset(importedAssets[0].model);
+  exportJson();
+  status.textContent = loaded === WORLD_MODELS.length
+    ? `Loaded active game map: ${WORLD_NAME} (${loaded} model${loaded === 1 ? "" : "s"}).`
+    : `Loaded ${loaded}/${WORLD_MODELS.length} active map models.`;
 }
 
 function normalizeImportedModel(model: THREE.Group, name: string): THREE.Group {
@@ -1338,13 +1373,14 @@ function disposeObject(object: THREE.Object3D): void {
 }
 
 function rebuildSmartModelCollision(automatic: boolean): ModelCollisionResult | undefined {
-  if (!importedModel) {
-    status.textContent = "Import a GLB model first.";
+  const asset = importedAssetForModel(selectedAsset);
+  if (!asset) {
+    status.textContent = "Select an imported GLB model first.";
     return undefined;
   }
-  importedModel.updateMatrixWorld(true);
-  const collision = buildModelCollision(importedModel);
-  clearModelCollision(false);
+  asset.model.updateMatrixWorld(true);
+  const collision = buildModelCollision(asset.model);
+  clearModelCollision(false, asset.id);
   if (collision.localVertices.length < 3 || collision.triangles.length < 1) return { ...collision, created: 0 };
   const created = addHull({
     id: uniqueId("model-exact-collision"),
@@ -1355,11 +1391,12 @@ function rebuildSmartModelCollision(automatic: boolean): ModelCollisionResult | 
     solid: true,
     generatedFrom: "model",
     optimizedFromModel: collision.optimized,
-    linkedToModel: true
+    linkedToModel: true,
+    linkedAssetId: asset.id
   });
   created.mesh.updateMatrixWorld(true);
   if (collisionEditMode) selectHull(created);
-  else selectAsset(importedModel);
+  else selectAsset(asset.model);
   if (!automatic) {
     status.textContent = collision.optimized
       ? `Built one smooth ${collision.triangles.length.toLocaleString()}-triangle collider from ${collision.sourceTriangles.toLocaleString()} visual triangles. Turn Edit Collision on to adjust it.`
@@ -1369,8 +1406,12 @@ function rebuildSmartModelCollision(automatic: boolean): ModelCollisionResult | 
   return { ...collision, created: 1 };
 }
 
-function clearModelCollision(showStatus: boolean): void {
-  const generatedHulls = hulls.filter((hull) => hull.generatedFrom === "model");
+function clearModelCollision(showStatus: boolean, assetId = importedAssetForModel(selectedAsset)?.id ?? selectedHull?.linkedAssetId): void {
+  if (!assetId) {
+    if (showStatus) status.textContent = "Select a model or its collision mesh first.";
+    return;
+  }
+  const generatedHulls = hulls.filter((hull) => hull.generatedFrom === "model" && hull.linkedAssetId === assetId);
   const selectedWasGenerated = selectedHull ? generatedHulls.includes(selectedHull) : false;
   for (const hull of generatedHulls) removeEditableHull(hull);
   if (selectedWasGenerated) selectHull(undefined);
@@ -1506,7 +1547,7 @@ function exportJson(): void {
     worldSize,
     floorColor,
     borderColor,
-    asset: importedModel ? assetToExport(importedModel) : undefined,
+    assets: importedAssets.map((asset) => ({ id: asset.id, fileName: asset.file.name, ...assetToExport(asset.model) })),
     boxes: boxes.map(boxToEditableInput),
     hulls: hulls.map(hullToWorldHull)
   }, null, 2);
@@ -1532,28 +1573,23 @@ async function addMapToGame(): Promise<void> {
     mapNameInput.focus();
     return;
   }
-  if (importedModel && !importedModelFile) {
-    status.textContent = "Re-import the model GLB before adding this map so its model file can be copied into the game.";
-    return;
-  }
-
   button.disabled = true;
   button.textContent = "ADDING MAP...";
   status.textContent = `Adding ${mapName} to the game...`;
   try {
-    let model: { url: string; transform: ReturnType<typeof assetToExport> } | undefined;
-    if (importedModel && importedModelFile) {
-      const modelQuery = new URLSearchParams({ mapName, fileName: importedModelFile.name });
+    const models: Array<{ id: string; url: string; transform: ReturnType<typeof assetToExport> }> = [];
+    for (const asset of importedAssets) {
+      const modelQuery = new URLSearchParams({ mapName, modelId: asset.id, fileName: asset.file.name });
       const modelResponse = await fetch(`/api/mapmaker/model?${modelQuery}`, {
         method: "POST",
         headers: { "content-type": "application/octet-stream" },
-        body: importedModelFile
+        body: asset.file
       });
       const modelResult = await modelResponse.json().catch(() => ({})) as { ok?: boolean; error?: string; url?: string };
       if (!modelResponse.ok || !modelResult.ok || !modelResult.url) {
         throw new Error(modelResult.error || `Model upload returned ${modelResponse.status}`);
       }
-      model = { url: modelResult.url, transform: assetToExport(importedModel) };
+      models.push({ id: asset.id, url: modelResult.url, transform: assetToExport(asset.model) });
     }
     const response = await fetch("/api/mapmaker/add-to-game", {
       method: "POST",
@@ -1565,7 +1601,7 @@ async function addMapToGame(): Promise<void> {
         borderColor,
         boxes: boxes.map(boxToEditableInput),
         hulls: hulls.map(hullToWorldHull),
-        model
+        models
       })
     });
     const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; mapName?: string };
@@ -1867,7 +1903,8 @@ function hullToEditableInput(
     solid: hull.solid,
     generatedFrom: preserveLink ? hull.generatedFrom : undefined,
     optimizedFromModel: preserveLink ? hull.optimizedFromModel : undefined,
-    linkedToModel: preserveLink ? hull.linkedToModel : false
+    linkedToModel: preserveLink ? hull.linkedToModel : false,
+    linkedAssetId: preserveLink ? hull.linkedAssetId : undefined
   };
 }
 
@@ -1883,6 +1920,7 @@ function worldHullToEditableInput(hull: WorldHull): Omit<EditableHull, "mesh" | 
     solid: hull.solid,
     generatedFrom: hull.visible === false ? "model" : undefined,
     linkedToModel: hull.visible === false,
+    linkedAssetId: hull.modelId ?? (hull.visible === false ? WORLD_MODELS[0]?.id : undefined),
     initialPosition: roundTuple([center.x, center.y, center.z])
   };
 }
@@ -1903,7 +1941,9 @@ function normalizeWorldHull(value: unknown, index: number): WorldHull {
     triangles,
     color: String(raw.color ?? MODEL_COLLISION_COLOR),
     kind: "hull",
-    solid: raw.solid !== false
+    solid: raw.solid !== false,
+    visible: raw.visible !== false,
+    modelId: typeof raw.modelId === "string" ? raw.modelId : undefined
   };
 }
 
@@ -1923,7 +1963,8 @@ function hullToWorldHull(hull: EditableHull): WorldHull {
     color: hull.color,
     kind: "hull",
     solid: hull.solid,
-    visible: hull.generatedFrom === "model" ? false : undefined
+    visible: hull.generatedFrom === "model" ? false : undefined,
+    modelId: hull.generatedFrom === "model" ? hull.linkedAssetId : undefined
   };
 }
 
@@ -1941,6 +1982,14 @@ function uniqueId(base: string): string {
   let id = clean;
   let suffix = 2;
   while (boxes.some((box) => box.id === id) || hulls.some((hull) => hull.id === id)) id = `${clean}-${suffix++}`;
+  return id;
+}
+
+function uniqueAssetId(base: string): string {
+  const clean = base.replace(/[^a-z0-9-_]/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "model";
+  let id = clean;
+  let suffix = 2;
+  while (importedAssets.some((asset) => asset.id === id)) id = `${clean}-${suffix++}`;
   return id;
 }
 

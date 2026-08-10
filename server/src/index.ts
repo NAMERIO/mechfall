@@ -41,7 +41,7 @@ if (mapMakerPublishingEnabled) {
         return;
       }
       if (!Buffer.isBuffer(request.body)) throw new Error("The model upload was empty.");
-      const result = await publishMapModel(workspaceRoot, request.query.mapName, request.query.fileName, request.body);
+      const result = await publishMapModel(workspaceRoot, request.query.mapName, request.query.modelId, request.query.fileName, request.body);
       response.json({ ok: true, url: result.url });
     } catch (error) {
       response.status(400).json({ error: error instanceof Error ? error.message : "Could not copy the model." });

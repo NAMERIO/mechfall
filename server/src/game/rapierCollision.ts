@@ -39,6 +39,20 @@ const MAX_WALK_SLOPE = 58 * Math.PI / 180;
 const MAX_STEP_HEIGHT = 1.25;
 const GROUND_SNAP_DISTANCE = 0.55;
 const CLING_PROBE_DISTANCE = 0.16;
+const MANTLE_DURATION = 0.48;
+const MANTLE_INWARD_SPEED = GAME.climbSpeed * 0.72;
+const MANTLE_UP_SPEED = GAME.climbSpeed * 0.18;
+const MANTLE_STATE_TIMEOUT_MS = 120;
+
+interface MantleTransition {
+  surfaceId: string;
+  normalX: number;
+  normalZ: number;
+  remaining: number;
+  updatedAt: number;
+}
+
+const mantleTransitions = new WeakMap<PhysicsBody, MantleTransition>();
 
 const model = WORLD_MODELS.find((candidate) => candidate.id === "bunker");
 export const hasCompoundWorldCollision = model !== undefined && manifest.colliders.length > 0;
@@ -117,6 +131,15 @@ export function moveClingingBodyWithRapier(
   vertical: number,
   dt: number
 ): "attached" | "released" | "mantled" {
+  const now = Date.now();
+  const activeTransition = mantleTransitions.get(body);
+  if (activeTransition) {
+    if (activeTransition.surfaceId === cling.surfaceId
+        && now - activeTransition.updatedAt <= MANTLE_STATE_TIMEOUT_MS) {
+      return advanceMantleTransition(body, activeTransition, dt, now);
+    }
+    mantleTransitions.delete(body);
+  }
   const horizontalLength = Math.hypot(cling.normalX, cling.normalZ);
   if (horizontalLength < 0.5) return "released";
   const normalX = cling.normalX / horizontalLength;
@@ -132,7 +155,7 @@ export function moveClingingBodyWithRapier(
   };
 
   setCharacterPosition(body.position);
-  characterController.computeColliderMovement(characterCollider, desired, undefined, undefined, excludeCharacter);
+  computeClimbingMovement(desired);
   const movement = characterController.computedMovement();
   const previous = { ...body.position };
   body.position.x += movement.x;
@@ -140,6 +163,18 @@ export function moveClingingBodyWithRapier(
   body.position.z += movement.z;
 
   if (!touchesSurface(body.position, cling.surfaceId, normalX, normalZ)) {
+    if (vertical > 0.1 && dt > 0) {
+      const transition: MantleTransition = {
+        surfaceId: cling.surfaceId,
+        normalX,
+        normalZ,
+        remaining: MANTLE_DURATION,
+        updatedAt: now
+      };
+      mantleTransitions.set(body, transition);
+      updateVelocityFromMovement(body, movement, dt);
+      return "attached";
+    }
     body.position.x = previous.x;
     body.position.y = previous.y;
     body.position.z = previous.z;
@@ -149,6 +184,40 @@ export function moveClingingBodyWithRapier(
     return "released";
   }
 
+  updateVelocityFromMovement(body, movement, dt);
+  return "attached";
+}
+
+function advanceMantleTransition(
+  body: PhysicsBody,
+  transition: MantleTransition,
+  dt: number,
+  now: number
+): "attached" | "mantled" {
+  if (dt <= 0) return "attached";
+  setCharacterPosition(body.position);
+  const desired = {
+    x: -transition.normalX * MANTLE_INWARD_SPEED * dt,
+    y: MANTLE_UP_SPEED * dt,
+    z: -transition.normalZ * MANTLE_INWARD_SPEED * dt
+  };
+  computeClimbingMovement(desired);
+  const movement = characterController.computedMovement();
+  body.position.x += movement.x;
+  body.position.y += movement.y;
+  body.position.z += movement.z;
+  updateVelocityFromMovement(body, movement, dt);
+  transition.remaining -= dt;
+  transition.updatedAt = now;
+  if (transition.remaining > 0) return "attached";
+  mantleTransitions.delete(body);
+  body.velocity.x = 0;
+  body.velocity.y = 0;
+  body.velocity.z = 0;
+  return "mantled";
+}
+
+function updateVelocityFromMovement(body: PhysicsBody, movement: RAPIER.Vector, dt: number): void {
   if (dt > 0) {
     body.velocity.x = movement.x / dt;
     body.velocity.y = movement.y / dt;
@@ -158,7 +227,17 @@ export function moveClingingBodyWithRapier(
     body.velocity.y = 0;
     body.velocity.z = 0;
   }
-  return "attached";
+}
+
+function computeClimbingMovement(desired: RAPIER.Vector): void {
+  characterController.disableAutostep();
+  characterController.disableSnapToGround();
+  try {
+    characterController.computeColliderMovement(characterCollider, desired, undefined, undefined, excludeCharacter);
+  } finally {
+    characterController.enableAutostep(MAX_STEP_HEIGHT, PLAYER_RADIUS * 0.65, false);
+    characterController.enableSnapToGround(GROUND_SNAP_DISTANCE);
+  }
 }
 
 function probeGround(position: Vec3): boolean {
@@ -200,13 +279,7 @@ function horizontalClingCollision(): SurfaceClingState | undefined {
 
 function touchesSurface(position: Vec3, surfaceId: string, normalX: number, normalZ: number): boolean {
   setCharacterPosition(position);
-  characterController.computeColliderMovement(
-    characterCollider,
-    { x: -normalX * CLING_PROBE_DISTANCE, y: 0, z: -normalZ * CLING_PROBE_DISTANCE },
-    undefined,
-    undefined,
-    excludeCharacter
-  );
+  computeClimbingMovement({ x: -normalX * CLING_PROBE_DISTANCE, y: 0, z: -normalZ * CLING_PROBE_DISTANCE });
   for (let index = 0; index < characterController.numComputedCollisions(); index += 1) {
     const collision = characterController.computedCollision(index);
     if (collision?.collider && surfaceIds.get(collision.collider.handle) === surfaceId) return true;

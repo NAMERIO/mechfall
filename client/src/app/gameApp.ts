@@ -161,6 +161,10 @@ input.onPoseMenuStart = () => setPoseMenu(true);
 input.onPoseMenuEnd = () => setPoseMenu(false);
 input.onWhistle = whistle;
 input.onTogglePaint = togglePaintMode;
+input.onToggleCollisionDebug = () => {
+  const enabled = world.toggleCollisionDebug();
+  showToast(`COLLISION VIEW ${enabled ? "ON" : "OFF"} · F7`);
+};
 input.onAction = () => {
   const self = world.getSelf();
   if (!self?.alive) return;

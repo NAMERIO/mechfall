@@ -15,12 +15,13 @@ export class InputController {
   onPoseMenuEnd?: () => void;
   onWhistle?: () => void;
   onTogglePaint?: () => void;
+  onToggleCollisionDebug?: () => void;
   private paintMode = false;
   private poseMenuHeld = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (event) => {
-      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "Digit1"].includes(event.code)) event.preventDefault();
+      if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "Digit1", "F7"].includes(event.code)) event.preventDefault();
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
       if (event.code === "KeyR" && !event.repeat) {
@@ -28,6 +29,7 @@ export class InputController {
         this.onPoseMenuStart?.();
       }
       if (event.code === "KeyF" && !event.repeat) this.onTogglePaint?.();
+      if (event.code === "F7" && !event.repeat) this.onToggleCollisionDebug?.();
       if (event.code === "Digit1" && !event.repeat) this.onWhistle?.();
       if (event.code === "KeyV" && !event.repeat) this.faceCamera();
       if (event.code === "Escape" && document.pointerLockElement === this.canvas) document.exitPointerLock();

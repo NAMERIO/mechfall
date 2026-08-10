@@ -77,6 +77,21 @@ export class WorldRenderer {
   private readonly clock = new THREE.Clock();
   private readonly avatars = new Map<string, Avatar>();
   private readonly sampleSurfaces: THREE.Object3D[] = [];
+  private readonly collisionDebugRoot = new THREE.Group();
+  private readonly collisionDebugFillMaterial = new THREE.MeshBasicMaterial({
+    color: "#ff2438",
+    transparent: true,
+    opacity: 0.16,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide
+  });
+  private readonly collisionDebugLineMaterial = new THREE.LineBasicMaterial({
+    color: "#ff1028",
+    transparent: true,
+    opacity: 0.95,
+    depthTest: false
+  });
   private readonly raycaster = new THREE.Raycaster();
   private readonly pendingPaint = new Map<string, PaintStroke[]>();
   private readonly beforeRenderTasks = new Set<() => void>();
@@ -108,6 +123,9 @@ export class WorldRenderer {
 
     this.scene.background = new THREE.Color("#b8c4ba");
     this.scene.fog = new THREE.FogExp2("#b8c4ba", 0.018);
+    this.collisionDebugRoot.name = "collision-debug";
+    this.collisionDebugRoot.visible = false;
+    this.scene.add(this.collisionDebugRoot);
     this.buildLighting();
     this.buildWorld();
     this.characterLoadPromise = this.loadCharacterModel();
@@ -119,6 +137,11 @@ export class WorldRenderer {
 
   bindInput(input: InputController): void {
     this.input = input;
+  }
+
+  toggleCollisionDebug(): boolean {
+    this.collisionDebugRoot.visible = !this.collisionDebugRoot.visible;
+    return this.collisionDebugRoot.visible;
   }
 
   scheduleBeforeRender(task: () => void): void {
@@ -572,6 +595,8 @@ export class WorldRenderer {
 
   destroy(): void {
     this.running = false;
+    this.collisionDebugFillMaterial.dispose();
+    this.collisionDebugLineMaterial.dispose();
     this.renderer.dispose();
   }
 
@@ -626,11 +651,12 @@ export class WorldRenderer {
       mesh.userData.sampleColor = box.color;
       this.sampleSurfaces.push(mesh);
       this.scene.add(mesh);
+      if (box.solid) this.addCollisionDebugShape(geometry, mesh.position);
       this.addBoxDetails(mesh, box.kind);
     }
 
     for (const hull of WORLD_HULLS) {
-      if (hull.vertices.length < 4 || hull.visible === false) continue;
+      if (hull.vertices.length < 4) continue;
       const geometry = hull.triangles?.length
         ? new THREE.BufferGeometry()
         : new ConvexGeometry(hull.vertices.map((vertex) => new THREE.Vector3(...vertex)));
@@ -639,6 +665,8 @@ export class WorldRenderer {
         geometry.setIndex(hull.triangles.flat());
         geometry.computeVertexNormals();
       }
+      if (hull.solid) this.addCollisionDebugShape(geometry);
+      if (hull.visible === false) continue;
       const material = new THREE.MeshStandardMaterial({ color: hull.color, roughness: 0.7 });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.castShadow = true;
@@ -653,6 +681,16 @@ export class WorldRenderer {
     }
 
     void this.loadWorldModel();
+  }
+
+  private addCollisionDebugShape(geometry: THREE.BufferGeometry, position?: THREE.Vector3): void {
+    const debugMesh = new THREE.Mesh(geometry, this.collisionDebugFillMaterial);
+    if (position) debugMesh.position.copy(position);
+    debugMesh.renderOrder = 100;
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, 12), this.collisionDebugLineMaterial);
+    edges.renderOrder = 101;
+    debugMesh.add(edges);
+    this.collisionDebugRoot.add(debugMesh);
   }
 
   private async loadWorldModel(): Promise<void> {

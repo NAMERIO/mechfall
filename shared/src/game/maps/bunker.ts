@@ -44,7 +44,16 @@ export const GENERATED_WORLD_MODELS: readonly WorldModel[] = [
   }
 ];
 
-export const GENERATED_WORLD_BOXES: readonly WorldBox[] = [];
+export const GENERATED_WORLD_BOXES: readonly WorldBox[] = [
+  {
+    id: "bunker-roof",
+    position: [0, 12.5, 0],
+    size: [GENERATED_WORLD_SIZE, 1, GENERATED_WORLD_SIZE],
+    color: "#292a27",
+    kind: "wall",
+    solid: true
+  }
+];
 
 const BUNKER_COLLISION_SOURCE: readonly WorldHull[] = [
   {

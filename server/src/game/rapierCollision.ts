@@ -1,5 +1,5 @@
 import RAPIER from "@dimforge/rapier3d-compat";
-import { GAME, WORLD_MODELS, WORLD_SIZE, type SurfaceClingState, type Vec3 } from "@mechfall/shared";
+import { GAME, WORLD_BOXES, WORLD_MODELS, WORLD_SIZE, type SurfaceClingState, type Vec3 } from "@mechfall/shared";
 import bunkerManifest from "../../../client/public/models/maps/bunker.compound-colliders.json" with { type: "json" };
 
 await RAPIER.init();
@@ -73,6 +73,7 @@ const characterCollider = world.createCollider(
 );
 
 if (model) buildCompoundMap(model);
+buildWorldBoxCollision();
 buildArenaSafetyCollision();
 world.step();
 
@@ -418,6 +419,17 @@ function colliderDescriptor(entry: ManifestCollider, scale: readonly [number, nu
     );
   }
   return null;
+}
+
+function buildWorldBoxCollision(): void {
+  for (const box of WORLD_BOXES) {
+    if (!box.solid) continue;
+    const collider = world.createCollider(
+      RAPIER.ColliderDesc.cuboid(box.size[0] / 2, box.size[1] / 2, box.size[2] / 2)
+        .setTranslation(box.position[0], box.position[1], box.position[2])
+    );
+    surfaceIds.set(collider.handle, box.id);
+  }
 }
 
 function buildArenaSafetyCollision(): void {

@@ -144,7 +144,7 @@ export class WorldRenderer {
     container.append(this.canvas);
 
     this.scene.background = new THREE.Color("#b8c4ba");
-    this.scene.fog = new THREE.FogExp2("#b8c4ba", 0.018);
+    this.scene.fog = new THREE.FogExp2("#000000", 0.018);
     this.scene.add(this.camera);
     this.collisionDebugRoot.name = "collision-debug";
     this.collisionDebugRoot.visible = false;
@@ -995,7 +995,7 @@ export class WorldRenderer {
       if (LOCOMOTION_ARM_POSE.has(child.name as LocomotionArmBoneName)) locomotionArmBones[child.name as LocomotionArmBoneName] = child;
       if (!(child instanceof THREE.Mesh)) return;
       child.material = material;
-      child.castShadow = true;
+      child.castShadow = false;
       child.receiveShadow = true;
       child.userData.paintPart = "body" satisfies PaintPart;
       characterMesh ??= child;
@@ -1137,7 +1137,7 @@ export class WorldRenderer {
 
     root.traverse((child) => {
       if (child instanceof THREE.Mesh) {
-        child.castShadow = true;
+        child.castShadow = false;
         child.receiveShadow = true;
       }
     });
@@ -1706,7 +1706,7 @@ function createShotgun(template?: THREE.Group): { weapon: THREE.Group; muzzle: T
     visual.rotation.y = Math.PI;
     visual.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
-      child.castShadow = true;
+      child.castShadow = false;
       child.receiveShadow = true;
     });
     weapon.add(visual);
@@ -1726,7 +1726,7 @@ function createShotgun(template?: THREE.Group): { weapon: THREE.Group; muzzle: T
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
     mesh.position.set(...position);
     mesh.rotation.z = rotationZ;
-    mesh.castShadow = true;
+    mesh.castShadow = false;
     weapon.add(mesh);
     return mesh;
   };
@@ -1734,7 +1734,7 @@ function createShotgun(template?: THREE.Group): { weapon: THREE.Group; muzzle: T
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 12), material);
     mesh.rotation.x = Math.PI / 2;
     mesh.position.set(...position);
-    mesh.castShadow = true;
+    mesh.castShadow = false;
     weapon.add(mesh);
     return mesh;
   };
@@ -1755,7 +1755,7 @@ function createShotgun(template?: THREE.Group): { weapon: THREE.Group; muzzle: T
   for (const y of [0.075, -0.085]) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(y > 0 ? 0.066 : 0.082, 0.014, 6, 16), black);
     ring.position.set(0, y, -1.17);
-    ring.castShadow = true;
+    ring.castShadow = false;
     weapon.add(ring);
   }
 

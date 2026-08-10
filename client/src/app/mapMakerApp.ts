@@ -2,7 +2,8 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
-import { WORLD_BOXES, WORLD_SIZE, type WorldBox } from "@mechfall/shared";
+import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
+import { WORLD_BOXES, WORLD_HULLS, WORLD_SIZE, convexHull2D, worldHullHeightAt, type WorldBox, type WorldHull } from "@mechfall/shared";
 
 type BoxKind = WorldBox["kind"];
 type EditableBox = {
@@ -16,6 +17,43 @@ type EditableBox = {
   edges: THREE.LineSegments;
 };
 type TransformMode = "translate" | "rotate" | "scale";
+type EditableHull = {
+  id: string;
+  localVertices: [number, number, number][];
+  triangles: [number, number, number][];
+  color: string;
+  kind: "hull";
+  solid: boolean;
+  mesh: THREE.Mesh;
+  edges: THREE.LineSegments;
+  generatedFrom?: "model";
+  optimizedFromModel?: boolean;
+  initialPosition?: [number, number, number];
+  linkedToModel?: boolean;
+};
+type EditorSnapshot = {
+  worldSize: number;
+  floorColor: string;
+  borderColor: string;
+  boxes: Array<Omit<EditableBox, "mesh" | "edges">>;
+  hulls: Array<{
+    input: Omit<EditableHull, "mesh" | "edges">;
+    position: [number, number, number];
+    rotation: [number, number, number];
+    scale: [number, number, number];
+  }>;
+  asset?: THREE.Group;
+  assetTransform?: { position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number] };
+  selectedType?: "box" | "hull" | "asset";
+  selectedId?: string;
+};
+type ModelCollisionBuild = {
+  localVertices: [number, number, number][];
+  triangles: [number, number, number][];
+  sourceTriangles: number;
+  optimized: boolean;
+};
+type ModelCollisionResult = ModelCollisionBuild & { created: number };
 
 const KIND_OPTIONS: BoxKind[] = ["wall", "crate", "table", "column", "planter"];
 const PLAYER_RADIUS = 0.48;
@@ -32,6 +70,12 @@ const MIN_ASSET_SCALE = 0.02;
 const ROTATION_SNAP_DEGREES = 45;
 const ROTATION_SNAP_RADIANS = THREE.MathUtils.degToRad(ROTATION_SNAP_DEGREES);
 const BORDER_WALL_IDS = new Set(["north", "south", "west", "east"]);
+const MODEL_COLLISION_COLOR = "#57b9a9";
+const MIN_COLLISION_SIZE = 0.08;
+const MAX_UNDO_STEPS = 50;
+const MAX_MODEL_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_EXACT_COLLISION_TRIANGLES = 12_000;
+const MAX_OPTIMIZED_COLLISION_POINTS = 1_400;
 
 document.body.className = "mapmaker-page";
 document.body.innerHTML = `
@@ -40,7 +84,7 @@ document.body.innerHTML = `
       <header>
         <span>MECHFALL TOOL</span>
         <h1>MAP MAKER</h1>
-        <p>Build collision boxes, place models, test movement, export code.</p>
+        <p>Build collision shapes, place models, test movement, export code.</p>
       </header>
       <section class="mapmaker-tools">
         <button id="mm-add-box" type="button">ADD BOX</button>
@@ -83,8 +127,10 @@ document.body.innerHTML = `
       </section>
       <section class="mapmaker-import">
         <label>IMPORT MODEL <input id="mm-model-file" type="file" accept=".glb,.gltf,.zip" /></label>
-        <button id="mm-model-bounds" type="button">COLLISION FROM MODEL BOUNDS</button>
-        <button id="mm-model-meshes" type="button">COLLISION FROM MODEL MESHES</button>
+        <button id="mm-model-smart" type="button">REBUILD EXACT MODEL COLLISION</button>
+        <button id="mm-collision-edit" type="button">EDIT COLLISION: OFF</button>
+        <button id="mm-clear-model-collision" type="button">REMOVE MODEL COLLISION</button>
+        <small>Normal mode keeps the model and collision together. Detailed models are automatically optimized into one smooth, game-safe collision mesh.</small>
         <small id="mm-status">Tip: GLB works best. Zip support needs extracted model files for now.</small>
       </section>
       <section class="mapmaker-test">
@@ -101,7 +147,7 @@ document.body.innerHTML = `
     <section class="mapmaker-view">
       <div id="mm-canvas-host"></div>
       <div class="mapmaker-help">
-        <b>Mouse</b> orbit / select boxes or models · <b>WASD</b> move selected · <b>Q/E</b> up/down · <b>Scale</b> uniform lock
+        <b>Mouse</b> select models · <b>Edit Collision</b> exposes hitboxes · <b>Backspace</b> delete · <b>Ctrl+Z</b> undo
       </div>
     </section>
 
@@ -123,7 +169,7 @@ document.body.innerHTML = `
         <label>D <input id="mm-size-z" type="number" min="0.1" step="0.1" /></label>
       </div>
       <section class="mapmaker-list-wrap">
-        <label>BOXES</label>
+        <label>SCENE ITEMS & COLLISION PARTS</label>
         <div id="mm-box-list" class="mapmaker-box-list"></div>
       </section>
       <section class="mapmaker-export">
@@ -184,12 +230,28 @@ let transformMode: TransformMode = "translate";
 transform.setMode("translate");
 transform.addEventListener("dragging-changed", (event) => {
   orbit.enabled = !event.value;
+  if (event.value) checkpointUndo();
 });
 transform.addEventListener("objectChange", () => {
   if (selected) {
     if (transformMode === "translate") snapBoxToFloor(selected);
+    if (transformMode === "scale") {
+      selected.size = roundTuple([
+        Math.max(MIN_COLLISION_SIZE, Math.abs(selected.mesh.scale.x)),
+        Math.max(MIN_COLLISION_SIZE, Math.abs(selected.mesh.scale.y)),
+        Math.max(MIN_COLLISION_SIZE, Math.abs(selected.mesh.scale.z))
+      ]);
+      selected.mesh.scale.set(...selected.size);
+    }
     selected.position = roundTuple([selected.mesh.position.x, selected.mesh.position.y, selected.mesh.position.z]);
     fillFields(selected);
+    renderList();
+    exportJson();
+    return;
+  }
+  if (selectedHull) {
+    if (transformMode === "translate") snapHullToFloor(selectedHull);
+    fillFields(undefined, selectedHull);
     renderList();
     exportJson();
     return;
@@ -224,25 +286,45 @@ scene.add(grid);
 
 let boxes: EditableBox[] = [];
 let selected: EditableBox | undefined;
+let hulls: EditableHull[] = [];
+let selectedHull: EditableHull | undefined;
 let selectedAsset: THREE.Object3D | undefined;
 let importedModel: THREE.Group | undefined;
 let testMode = false;
+let collisionEditMode = false;
+let restoringUndo = false;
+const undoStack: EditorSnapshot[] = [];
 const keys = new Set<string>();
 const testPlayer = makeTestPlayer();
 scene.add(testPlayer);
 
 loadBoxes(WORLD_BOXES.map(boxToEditableInput));
+for (const hull of WORLD_HULLS) addHull(worldHullToEditableInput(hull));
 exportJson();
 
 element<HTMLButtonElement>("#mm-add-box").addEventListener("click", () => {
+  checkpointUndo();
   selectBox(addBox({ id: uniqueId("box"), position: [0, 1, 0], size: [2, 2, 2], color: "#d9564a", kind: "crate", solid: true }));
 });
 element<HTMLButtonElement>("#mm-duplicate-box").addEventListener("click", () => {
-  if (!selected) return;
-  selectBox(addBox({ ...boxToEditableInput(selected), id: uniqueId(`${selected.id}-copy`), position: [selected.position[0] + 1, selected.position[1], selected.position[2] + 1] }));
+  if (selected) {
+    checkpointUndo();
+    selectBox(addBox({ ...boxToEditableInput(selected), id: uniqueId(`${selected.id}-copy`), position: [selected.position[0] + 1, selected.position[1], selected.position[2] + 1] }));
+  } else if (selectedHull) {
+    checkpointUndo();
+    const copy = addHull({ ...hullToEditableInput(selectedHull), id: uniqueId(`${selectedHull.id}-copy`) });
+    copy.mesh.position.copy(selectedHull.mesh.position).add(new THREE.Vector3(1, 0, 1));
+    copy.mesh.rotation.copy(selectedHull.mesh.rotation);
+    copy.mesh.scale.copy(selectedHull.mesh.scale);
+    selectHull(copy);
+    exportJson();
+  }
 });
 element<HTMLButtonElement>("#mm-delete-box").addEventListener("click", deleteSelected);
-element<HTMLButtonElement>("#mm-load-default").addEventListener("click", resetDefaultMap);
+element<HTMLButtonElement>("#mm-load-default").addEventListener("click", () => {
+  checkpointUndo();
+  resetDefaultMap();
+});
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-transform-mode]")) {
   button.addEventListener("click", () => setTransformMode(button.dataset.mmTransformMode as TransformMode));
 }
@@ -255,21 +337,38 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-yaw-
 }
 scaleInputs.uniform.addEventListener("change", () => {
   if (!selectedAsset) return;
-  if (scaleInputs.uniform.checked) applyUniformAssetScale(selectedAsset, true);
+  if (scaleInputs.uniform.checked) {
+    checkpointUndo();
+    applyUniformAssetScale(selectedAsset, true);
+    exportJson();
+  }
 });
 element<HTMLButtonElement>("#mm-scale-reset").addEventListener("click", resetSelectedAssetScale);
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-scale-step]")) {
   button.addEventListener("click", () => stepSelectedAssetScale(Number(button.dataset.mmScaleStep ?? 0)));
 }
-element<HTMLButtonElement>("#mm-apply-world").addEventListener("click", applyWorldSettings);
-element<HTMLButtonElement>("#mm-rebuild-border").addEventListener("click", rebuildBorderWalls);
+element<HTMLButtonElement>("#mm-apply-world").addEventListener("click", () => {
+  checkpointUndo();
+  applyWorldSettings();
+});
+element<HTMLButtonElement>("#mm-rebuild-border").addEventListener("click", () => {
+  checkpointUndo();
+  rebuildBorderWalls();
+});
 worldInputs.floorColor.addEventListener("input", applyWorldSettings);
 worldInputs.size.addEventListener("change", applyWorldSettings);
 worldInputs.borderColor.addEventListener("input", () => {
   borderColor = worldInputs.borderColor.value;
 });
-element<HTMLButtonElement>("#mm-model-bounds").addEventListener("click", createCollisionFromModelBounds);
-element<HTMLButtonElement>("#mm-model-meshes").addEventListener("click", createCollisionFromModelMeshes);
+element<HTMLButtonElement>("#mm-model-smart").addEventListener("click", () => {
+  checkpointUndo();
+  rebuildSmartModelCollision(false);
+});
+element<HTMLButtonElement>("#mm-collision-edit").addEventListener("click", toggleCollisionEditMode);
+element<HTMLButtonElement>("#mm-clear-model-collision").addEventListener("click", () => {
+  checkpointUndo();
+  clearModelCollision(true);
+});
 element<HTMLButtonElement>("#mm-test-toggle").addEventListener("click", () => {
   testMode = !testMode;
   element<HTMLButtonElement>("#mm-test-toggle").textContent = `TEST COLLISION: ${testMode ? "ON" : "OFF"}`;
@@ -277,16 +376,23 @@ element<HTMLButtonElement>("#mm-test-toggle").addEventListener("click", () => {
 });
 element<HTMLInputElement>("#mm-model-file").addEventListener("change", (event) => {
   const input = event.currentTarget as HTMLInputElement;
-  void importModel(input.files?.[0]);
+  void importModel(input.files?.[0]).finally(() => {
+    input.value = "";
+  });
 });
 element<HTMLButtonElement>("#mm-export-json").addEventListener("click", exportJson);
 element<HTMLButtonElement>("#mm-export-code").addEventListener("click", exportCode);
 element<HTMLButtonElement>("#mm-copy-export").addEventListener("click", () => void navigator.clipboard.writeText(exportText.value));
-element<HTMLButtonElement>("#mm-import-map").addEventListener("click", importBoxesFromText);
+element<HTMLButtonElement>("#mm-import-map").addEventListener("click", () => {
+  checkpointUndo();
+  importBoxesFromText();
+});
 
 for (const input of Object.values(inputs)) {
+  input.addEventListener("focus", checkpointUndo);
   input.addEventListener("input", applyFieldsToSelected);
 }
+for (const input of Object.values(worldInputs)) input.addEventListener("focus", checkpointUndo);
 
 renderer.domElement.addEventListener("pointerdown", (event) => {
   if ((transform as unknown as { dragging?: boolean }).dragging) return;
@@ -294,15 +400,28 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1));
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects(boxes.map((box) => box.mesh), false)[0];
-  if (hit) {
-    selectBox(boxes.find((box) => box.mesh === hit.object));
-    return;
-  }
-  if (importedModel) {
-    const assetHit = raycaster.intersectObjects(getModelMeshes(importedModel), false)[0];
-    if (assetHit) {
-      selectAsset(importedModel);
+  if (collisionEditMode) {
+    const hullHit = raycaster.intersectObjects(hulls.map((hull) => hull.mesh), false)[0];
+    if (hullHit) {
+      selectHull(hulls.find((hull) => hull.mesh === hullHit.object));
+      return;
+    }
+    const boxHit = raycaster.intersectObjects(boxes.map((box) => box.mesh), false)[0];
+    if (boxHit) {
+      selectBox(boxes.find((box) => box.mesh === boxHit.object));
+      return;
+    }
+  } else {
+    if (importedModel) {
+      const assetHit = raycaster.intersectObjects(getModelMeshes(importedModel), false)[0];
+      if (assetHit) {
+        selectAsset(importedModel);
+        return;
+      }
+    }
+    const boxHit = raycaster.intersectObjects(boxes.map((box) => box.mesh), false)[0];
+    if (boxHit) {
+      selectBox(boxes.find((box) => box.mesh === boxHit.object));
       return;
     }
   }
@@ -310,7 +429,18 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.code === "KeyZ" && !event.shiftKey) {
+    event.preventDefault();
+    undoLastChange();
+    return;
+  }
   keys.add(event.code);
+  if (!event.repeat && ["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE"].includes(event.code)
+      && !isTypingInForm() && (selected || selectedHull || selectedAsset)) checkpointUndo();
+  if ((event.code === "Delete" || event.code === "Backspace") && !isTypingInForm()) {
+    event.preventDefault();
+    deleteSelected();
+  }
   updateTransformSnapping();
 });
 window.addEventListener("keyup", (event) => {
@@ -332,6 +462,74 @@ function element<T extends HTMLElement>(selector: string): T {
   return found;
 }
 
+function checkpointUndo(): void {
+  if (restoringUndo) return;
+  undoStack.push(captureEditorSnapshot());
+  if (undoStack.length > MAX_UNDO_STEPS) undoStack.shift();
+}
+
+function captureEditorSnapshot(): EditorSnapshot {
+  const selectedType = selected ? "box" : selectedHull ? "hull" : selectedAsset ? "asset" : undefined;
+  return {
+    worldSize,
+    floorColor,
+    borderColor,
+    boxes: boxes.map((box) => boxToEditableInput(box)),
+    hulls: hulls.map((hull) => ({
+      input: hullToEditableInput(hull, true, false),
+      position: roundTuple([hull.mesh.position.x, hull.mesh.position.y, hull.mesh.position.z]),
+      rotation: roundTuple([hull.mesh.rotation.x, hull.mesh.rotation.y, hull.mesh.rotation.z]),
+      scale: roundTuple([hull.mesh.scale.x, hull.mesh.scale.y, hull.mesh.scale.z])
+    })),
+    asset: importedModel,
+    assetTransform: importedModel ? assetToExport(importedModel) : undefined,
+    selectedType,
+    selectedId: selected?.id ?? selectedHull?.id
+  };
+}
+
+function undoLastChange(): void {
+  const snapshot = undoStack.pop();
+  if (!snapshot) {
+    status.textContent = "Nothing to undo yet.";
+    return;
+  }
+  restoringUndo = true;
+  try {
+    worldInputs.size.value = String(snapshot.worldSize);
+    worldInputs.floorColor.value = snapshot.floorColor;
+    worldInputs.borderColor.value = snapshot.borderColor;
+    applyWorldSettings();
+    for (const box of [...boxes]) removeEditableBox(box);
+    for (const hull of [...hulls]) removeEditableHull(hull);
+    if (importedModel && importedModel !== snapshot.asset) scene.remove(importedModel);
+    importedModel = snapshot.asset;
+    if (importedModel && snapshot.assetTransform) {
+      scene.add(importedModel);
+      importedModel.position.set(...snapshot.assetTransform.position);
+      importedModel.rotation.set(...snapshot.assetTransform.rotation);
+      importedModel.scale.set(...snapshot.assetTransform.scale);
+      importedModel.updateMatrixWorld(true);
+    }
+    for (const input of snapshot.boxes) addBox(input);
+    for (const hullSnapshot of snapshot.hulls) {
+      const hull = addHull(hullSnapshot.input);
+      hull.mesh.position.set(...hullSnapshot.position);
+      hull.mesh.rotation.set(...hullSnapshot.rotation);
+      hull.mesh.scale.set(...hullSnapshot.scale);
+      hull.mesh.updateMatrixWorld(true);
+    }
+    if (snapshot.selectedType === "asset" && importedModel) selectAsset(importedModel);
+    else if (snapshot.selectedType === "hull") selectHull(hulls.find((hull) => hull.id === snapshot.selectedId));
+    else if (snapshot.selectedType === "box") selectBox(boxes.find((box) => box.id === snapshot.selectedId));
+    else selectBox(undefined);
+    exportJson();
+    status.textContent = "Undid the last map maker change.";
+  } finally {
+    restoringUndo = false;
+  }
+}
+
 function makeGrid(size: number): THREE.GridHelper {
   const helper = new THREE.GridHelper(size, Math.max(8, Math.round(size)), "#f4d24f", "#748580");
   (Array.isArray(helper.material) ? helper.material : [helper.material]).forEach((material) => {
@@ -343,6 +541,10 @@ function makeGrid(size: number): THREE.GridHelper {
 
 function setTransformMode(mode: TransformMode): void {
   if (!["translate", "rotate", "scale"].includes(mode)) return;
+  if (mode === "rotate" && selected) {
+    mode = "translate";
+    status.textContent = "Collision boxes are axis-aligned. Use MOVE or SCALE to adjust this part.";
+  }
   transformMode = mode;
   transform.setMode(mode);
   if (mode === "scale" && selectedAsset) setUniformScaleReference(selectedAsset);
@@ -379,11 +581,8 @@ function rebuildBorderWalls(): void {
   applyWorldSettings();
   for (const box of [...boxes]) {
     if (!BORDER_WALL_IDS.has(box.id)) continue;
-    scene.remove(box.mesh);
-    box.mesh.geometry.dispose();
-    (box.mesh.material as THREE.Material).dispose();
+    removeEditableBox(box);
   }
-  boxes = boxes.filter((box) => !BORDER_WALL_IDS.has(box.id));
 
   const half = worldSize / 2;
   const thickness = 1;
@@ -410,6 +609,7 @@ function resetDefaultMap(): void {
   worldInputs.borderColor.value = borderColor;
   applyWorldSettings();
   loadBoxes(WORLD_BOXES.map(boxToEditableInput));
+  loadHulls(WORLD_HULLS.map(worldHullToEditableInput));
   status.textContent = "Loaded the current game map.";
 }
 
@@ -429,15 +629,64 @@ function addBox(input: Omit<EditableBox, "mesh" | "edges">): EditableBox {
   return box;
 }
 
+function addHull(input: Omit<EditableHull, "mesh" | "edges">): EditableHull {
+  const points = input.localVertices.map((vertex) => new THREE.Vector3(...vertex));
+  const geometry = input.triangles.length > 0 ? new THREE.BufferGeometry() : new ConvexGeometry(points);
+  if (input.triangles.length > 0) {
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(input.localVertices.flat(), 3));
+    geometry.setIndex(input.triangles.flat());
+    geometry.computeVertexNormals();
+  }
+  const material = new THREE.MeshStandardMaterial({
+    color: input.color,
+    transparent: true,
+    opacity: input.solid ? 0.16 : 0.08,
+    roughness: 0.7,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.userData.isCollisionMesh = true;
+  if (input.initialPosition) mesh.position.set(...input.initialPosition);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry, 18),
+    new THREE.LineBasicMaterial({ color: "#57b9a9", transparent: true, opacity: 0.9 })
+  );
+  mesh.add(edges);
+  const hull: EditableHull = { ...input, mesh, edges };
+  hulls.push(hull);
+  if (input.linkedToModel && importedModel) importedModel.add(mesh);
+  else scene.add(mesh);
+  syncHullMesh(hull);
+  renderList();
+  return hull;
+}
+
 function syncBoxMesh(box: EditableBox): void {
   box.mesh.name = box.id;
   box.mesh.position.set(...box.position);
+  box.mesh.rotation.set(0, 0, 0);
   box.mesh.scale.set(...box.size);
   const material = box.mesh.material as THREE.MeshStandardMaterial;
   material.color.set(box.color);
   material.opacity = box.solid ? 0.42 : 0.18;
   (box.edges.material as THREE.LineBasicMaterial).color.set(selected === box ? "#f4d24f" : "#ff5e52");
   (box.edges.material as THREE.LineBasicMaterial).opacity = selected === box ? 1 : 0.85;
+}
+
+function syncHullMesh(hull: EditableHull): void {
+  hull.mesh.name = hull.id;
+  const material = hull.mesh.material as THREE.MeshStandardMaterial;
+  material.color.set(hull.color);
+  material.opacity = collisionEditMode ? (hull.solid ? 0.42 : 0.2) : (hull.solid ? 0.1 : 0.05);
+  const edgeMaterial = hull.edges.material as THREE.LineBasicMaterial;
+  edgeMaterial.color.set(selectedHull === hull ? "#f4d24f" : MODEL_COLLISION_COLOR);
+  edgeMaterial.opacity = collisionEditMode ? (selectedHull === hull ? 1 : 0.78) : 0.16;
 }
 
 function isIgnoringFloorSnap(): boolean {
@@ -464,8 +713,9 @@ function stepSelectedAssetScale(direction: number): void {
   }
   const current = getUniformScaleValue(target);
   const multiplier = Math.max(MIN_ASSET_SCALE, 1 + direction * ASSET_SCALE_STEP);
+  checkpointUndo();
   setUniformAssetScale(target, current * multiplier);
-  status.textContent = `Scaled asset ${direction > 0 ? "bigger" : "smaller"} uniformly.`;
+  status.textContent = `Scaled model and linked collision ${direction > 0 ? "bigger" : "smaller"}.`;
   exportJson();
 }
 
@@ -475,8 +725,9 @@ function resetSelectedAssetScale(): void {
     status.textContent = "Select an imported asset first to reset its scale.";
     return;
   }
+  checkpointUndo();
   setUniformAssetScale(target, getDefaultUniformScale(target));
-  status.textContent = "Reset asset scale to its imported size.";
+  status.textContent = "Reset model scale; linked collision followed it.";
   exportJson();
 }
 
@@ -525,9 +776,10 @@ function snapSelectedRotation(): void {
     status.textContent = "Select an imported asset first to snap its rotation.";
     return;
   }
+  checkpointUndo();
   snapObjectRotation(target);
   setRotationClipBaseToCurrent(target);
-  status.textContent = "Snapped asset rotation and reset clip from current facing.";
+  status.textContent = "Snapped model rotation; linked collision followed it.";
   exportJson();
 }
 
@@ -537,12 +789,13 @@ function setSelectedYaw(degrees: number): void {
     status.textContent = "Select an imported asset first to set straight/side/diagonal.";
     return;
   }
+  checkpointUndo();
   target.rotation.x = snapAngle(target.rotation.x);
   target.rotation.y = THREE.MathUtils.degToRad(degrees) - getVisualYawOffset(target);
   target.rotation.z = snapAngle(target.rotation.z);
   target.updateMatrixWorld(true);
   setRotationClipBaseToCurrent(target);
-  status.textContent = `Set asset yaw to ${degrees}° (${degrees === 0 ? "straight" : degrees === 90 ? "side" : "diagonal"}).`;
+  status.textContent = `Set model yaw to ${degrees}°; linked collision followed it.`;
   exportJson();
 }
 
@@ -552,10 +805,11 @@ function stepSelectedYaw(degrees: number): void {
     status.textContent = "Select an imported asset first to rotate it by 45°.";
     return;
   }
+  checkpointUndo();
   target.rotation.y += THREE.MathUtils.degToRad(degrees);
   snapObjectRotation(target);
   setRotationClipBaseToCurrent(target);
-  status.textContent = `Turned asset ${degrees > 0 ? "+" : ""}${degrees}° and clipped to ${ROTATION_SNAP_DEGREES}° angles.`;
+  status.textContent = `Turned model ${degrees > 0 ? "+" : ""}${degrees}°; linked collision followed it.`;
   exportJson();
 }
 
@@ -645,46 +899,134 @@ function snapAssetToFloor(asset: THREE.Object3D): void {
   asset.updateMatrixWorld(true);
 }
 
+function snapHullToFloor(hull: EditableHull): void {
+  if (isIgnoringFloorSnap()) return;
+  hull.mesh.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(hull.mesh);
+  if (bounds.isEmpty() || Math.abs(bounds.min.y) > FLOOR_SNAP_DISTANCE) return;
+  hull.mesh.position.y -= bounds.min.y;
+  hull.mesh.updateMatrixWorld(true);
+}
+
 function selectBox(box: EditableBox | undefined): void {
   selected = box;
+  selectedHull = undefined;
   selectedAsset = undefined;
+  if (box && transformMode === "rotate") setTransformMode("translate");
   transform.detach();
   for (const item of boxes) syncBoxMesh(item);
   if (box) transform.attach(box.mesh);
-  fillFields(box);
+  for (const hull of hulls) syncHullMesh(hull);
+  fillFields(box, undefined);
+  renderList();
+}
+
+function selectHull(hull: EditableHull | undefined): void {
+  if (hull?.linkedToModel && !collisionEditMode) {
+    if (importedModel) selectAsset(importedModel);
+    return;
+  }
+  selected = undefined;
+  selectedHull = hull;
+  selectedAsset = undefined;
+  transform.detach();
+  for (const box of boxes) syncBoxMesh(box);
+  for (const item of hulls) syncHullMesh(item);
+  if (hull) transform.attach(hull.mesh);
+  fillFields(undefined, hull);
+  renderList();
+}
+
+function toggleCollisionEditMode(): void {
+  collisionEditMode = !collisionEditMode;
+  const button = element<HTMLButtonElement>("#mm-collision-edit");
+  button.textContent = `EDIT COLLISION: ${collisionEditMode ? "ON" : "OFF"}`;
+  button.classList.toggle("active", collisionEditMode);
+  for (const hull of hulls) syncHullMesh(hull);
+  if (collisionEditMode) {
+    const linked = hulls.find((hull) => hull.linkedToModel);
+    if (linked) selectHull(linked);
+    status.textContent = "Collision-only editing is ON. Select the cyan triangle mesh to adjust or delete it.";
+  } else {
+    if (importedModel) selectAsset(importedModel);
+    else if (selectedHull) selectHull(undefined);
+    status.textContent = "Collision-only editing is OFF. The model and its collision now select and move as one item.";
+  }
   renderList();
 }
 
 function selectAsset(asset: THREE.Object3D): void {
   selected = undefined;
+  selectedHull = undefined;
   selectedAsset = asset;
+  asset.userData.modelCollisionPosition ??= asset.position.clone();
   setUniformScaleReference(asset);
   transform.detach();
   for (const item of boxes) syncBoxMesh(item);
   transform.attach(asset);
-  fillFields(undefined);
+  fillFields(undefined, undefined);
   selectedTitle.textContent = `ASSET: ${asset.name || "MODEL"}`;
   status.textContent = "Asset selected. It snaps to the floor when close. Hold Shift while dragging to ignore snap.";
   renderList();
 }
 
-function fillFields(box: EditableBox | undefined): void {
-  selectedTitle.textContent = box?.id ?? "NONE";
-  for (const input of Object.values(inputs)) input.disabled = !box;
-  if (!box) return;
-  inputs.id.value = box.id;
-  inputs.kind.value = box.kind;
-  inputs.color.value = box.color;
-  inputs.solid.checked = box.solid;
-  inputs.px.value = formatNumber(box.position[0]);
-  inputs.py.value = formatNumber(box.position[1]);
-  inputs.pz.value = formatNumber(box.position[2]);
-  inputs.sx.value = formatNumber(box.size[0]);
-  inputs.sy.value = formatNumber(box.size[1]);
-  inputs.sz.value = formatNumber(box.size[2]);
+function fillFields(box: EditableBox | undefined, hull: EditableHull | undefined = selectedHull): void {
+  const item = box ?? hull;
+  selectedTitle.textContent = item?.id ?? "NONE";
+  for (const input of Object.values(inputs)) input.disabled = !item;
+  if (!item) return;
+  inputs.id.value = item.id;
+  inputs.kind.value = item.kind === "hull" ? "crate" : item.kind;
+  inputs.kind.disabled = item.kind === "hull";
+  inputs.color.value = item.color;
+  inputs.solid.checked = item.solid;
+  if (box) {
+    inputs.px.value = formatNumber(box.position[0]);
+    inputs.py.value = formatNumber(box.position[1]);
+    inputs.pz.value = formatNumber(box.position[2]);
+    inputs.sx.value = formatNumber(box.size[0]);
+    inputs.sy.value = formatNumber(box.size[1]);
+    inputs.sz.value = formatNumber(box.size[2]);
+    return;
+  }
+  const bounds = new THREE.Box3().setFromObject(hull!.mesh);
+  const size = bounds.getSize(new THREE.Vector3());
+  inputs.px.value = formatNumber(hull!.mesh.position.x);
+  inputs.py.value = formatNumber(hull!.mesh.position.y);
+  inputs.pz.value = formatNumber(hull!.mesh.position.z);
+  inputs.sx.value = formatNumber(size.x);
+  inputs.sy.value = formatNumber(size.y);
+  inputs.sz.value = formatNumber(size.z);
 }
 
 function applyFieldsToSelected(): void {
+  if (selectedHull) {
+    selectedHull.id = inputs.id.value.trim() || selectedHull.id;
+    selectedHull.color = inputs.color.value;
+    selectedHull.solid = inputs.solid.checked;
+    const bounds = new THREE.Box3().setFromObject(selectedHull.mesh);
+    const currentSize = bounds.getSize(new THREE.Vector3());
+    const desiredSize = new THREE.Vector3(
+      Math.max(MIN_COLLISION_SIZE, numberInput(inputs.sx, currentSize.x)),
+      Math.max(MIN_COLLISION_SIZE, numberInput(inputs.sy, currentSize.y)),
+      Math.max(MIN_COLLISION_SIZE, numberInput(inputs.sz, currentSize.z))
+    );
+    selectedHull.mesh.position.set(
+      numberInput(inputs.px, selectedHull.mesh.position.x),
+      numberInput(inputs.py, selectedHull.mesh.position.y),
+      numberInput(inputs.pz, selectedHull.mesh.position.z)
+    );
+    selectedHull.mesh.scale.multiply(new THREE.Vector3(
+      desiredSize.x / Math.max(MIN_COLLISION_SIZE, currentSize.x),
+      desiredSize.y / Math.max(MIN_COLLISION_SIZE, currentSize.y),
+      desiredSize.z / Math.max(MIN_COLLISION_SIZE, currentSize.z)
+    ));
+    syncHullMesh(selectedHull);
+    fillFields(undefined, selectedHull);
+    renderList();
+    exportJson();
+    return;
+  }
   if (!selected) return;
   selected.id = inputs.id.value.trim() || selected.id;
   selected.kind = (inputs.kind.value as BoxKind) || selected.kind;
@@ -703,21 +1045,77 @@ function applyFieldsToSelected(): void {
 
 function renderList(): void {
   boxList.innerHTML = "";
+  if (importedModel) {
+    const assetButton = document.createElement("button");
+    assetButton.type = "button";
+    assetButton.className = selectedAsset === importedModel ? "active mapmaker-asset-item" : "mapmaker-asset-item";
+    assetButton.disabled = collisionEditMode;
+    assetButton.innerHTML = `<strong>${escapeHtml(importedModel.name || "MODEL")}</strong><span>3D MODEL · ${collisionEditMode ? "DISABLE EDIT COLLISION TO SELECT" : "CLICK TO MOVE WITH COLLISION"}</span>`;
+    assetButton.addEventListener("click", () => selectAsset(importedModel!));
+    boxList.append(assetButton);
+  }
+  for (const hull of hulls) {
+    const row = document.createElement("div");
+    row.className = "mapmaker-box-row";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = hull === selectedHull ? "active mapmaker-hull-item" : "mapmaker-hull-item";
+    button.disabled = hull.linkedToModel === true && !collisionEditMode;
+    const collisionLabel = hull.optimizedFromModel ? "SMOOTH OPTIMIZED COLLISION" : "EXACT MODEL COLLISION";
+    button.innerHTML = `<strong>${escapeHtml(hull.id)}</strong><span>${collisionLabel} · ${hull.triangles.length} TRIANGLES${button.disabled ? " · ENABLE EDIT COLLISION" : ""}</span>`;
+    button.addEventListener("click", () => selectHull(hull));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "mapmaker-box-remove";
+    remove.disabled = hull.linkedToModel === true && !collisionEditMode;
+    remove.title = `Remove ${hull.id}`;
+    remove.setAttribute("aria-label", `Remove ${hull.id}`);
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      checkpointUndo();
+      removeEditableHull(hull);
+      selectHull(hulls[0]);
+      exportJson();
+    });
+    row.append(button, remove);
+    boxList.append(row);
+  }
   for (const box of boxes) {
+    const row = document.createElement("div");
+    row.className = "mapmaker-box-row";
     const button = document.createElement("button");
     button.type = "button";
     button.className = box === selected ? "active" : "";
     button.innerHTML = `<strong>${escapeHtml(box.id)}</strong><span>${box.kind} · ${box.size.map(formatNumber).join(" x ")}</span>`;
     button.addEventListener("click", () => selectBox(box));
-    boxList.append(button);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "mapmaker-box-remove";
+    remove.title = `Remove ${box.id}`;
+    remove.setAttribute("aria-label", `Remove ${box.id}`);
+    remove.textContent = "×";
+    remove.addEventListener("click", () => {
+      checkpointUndo();
+      const index = boxes.indexOf(box);
+      const next = boxes[index + 1] ?? boxes[index - 1];
+      removeEditableBox(box);
+      selectBox(next);
+      exportJson();
+    });
+    row.append(button, remove);
+    boxList.append(row);
   }
 }
 
 function deleteSelected(): void {
+  if (!selectedAsset && !selectedHull && !selected) return;
+  checkpointUndo();
   if (selectedAsset) {
-    if (selectedAsset === importedModel) importedModel = undefined;
+    if (selectedAsset === importedModel) {
+      clearModelCollision(false);
+      importedModel = undefined;
+    }
     scene.remove(selectedAsset);
-    disposeObject(selectedAsset);
     selectedAsset = undefined;
     transform.detach();
     fillFields(undefined);
@@ -725,46 +1123,108 @@ function deleteSelected(): void {
     exportJson();
     return;
   }
+  if (selectedHull) {
+    const removed = selectedHull;
+    const index = hulls.indexOf(removed);
+    removeEditableHull(removed);
+    selectHull(hulls[index] ?? hulls[index - 1]);
+    exportJson();
+    return;
+  }
   if (!selected) return;
-  scene.remove(selected.mesh);
-  selected.mesh.geometry.dispose();
-  (selected.mesh.material as THREE.Material).dispose();
-  boxes = boxes.filter((box) => box !== selected);
-  selectBox(boxes[0]);
+  const removed = selected;
+  const index = boxes.indexOf(removed);
+  removeEditableBox(removed);
+  selectBox(boxes[index] ?? boxes[index - 1]);
   exportJson();
 }
 
-function loadBoxes(inputs: Array<Omit<EditableBox, "mesh" | "edges">>): void {
-  for (const box of boxes) {
-    scene.remove(box.mesh);
-    box.mesh.geometry.dispose();
-    (box.mesh.material as THREE.Material).dispose();
+function removeEditableBox(box: EditableBox): void {
+  if (selected === box) {
+    selected = undefined;
+    transform.detach();
   }
-  boxes = [];
+  scene.remove(box.mesh);
+  box.edges.geometry.dispose();
+  (box.edges.material as THREE.Material).dispose();
+  box.mesh.geometry.dispose();
+  (box.mesh.material as THREE.Material).dispose();
+  boxes = boxes.filter((item) => item !== box);
+}
+
+function removeEditableHull(hull: EditableHull): void {
+  if (selectedHull === hull) {
+    selectedHull = undefined;
+    transform.detach();
+  }
+  hull.mesh.removeFromParent();
+  hull.edges.geometry.dispose();
+  (hull.edges.material as THREE.Material).dispose();
+  hull.mesh.geometry.dispose();
+  (hull.mesh.material as THREE.Material).dispose();
+  hulls = hulls.filter((item) => item !== hull);
+}
+
+function loadBoxes(inputs: Array<Omit<EditableBox, "mesh" | "edges">>): void {
+  for (const box of [...boxes]) removeEditableBox(box);
   inputs.forEach((input) => addBox(input));
   selectBox(boxes[0]);
   exportJson();
 }
 
+function loadHulls(inputs: Array<Omit<EditableHull, "mesh" | "edges">>): void {
+  for (const hull of [...hulls]) removeEditableHull(hull);
+  for (const input of inputs) addHull(input);
+  exportJson();
+}
+
 async function importModel(file: File | undefined): Promise<void> {
   if (!file) return;
-  if (file.name.toLowerCase().endsWith(".zip")) {
+  const lowerName = file.name.toLowerCase();
+  if (lowerName.endsWith(".zip")) {
     status.textContent = "Zip import needs a zip parser. For now: extract the zip and import the .glb file.";
     return;
   }
+  if (!lowerName.endsWith(".glb") && !lowerName.endsWith(".gltf")) {
+    status.textContent = "Unsupported model file. Import a .glb file (recommended) or a self-contained .gltf file.";
+    return;
+  }
+  if (file.size > MAX_MODEL_FILE_BYTES) {
+    status.textContent = `Could not load ${file.name}: the file is larger than ${Math.round(MAX_MODEL_FILE_BYTES / 1024 / 1024)} MB. Optimize the model before importing it.`;
+    return;
+  }
   const url = URL.createObjectURL(file);
+  let candidate: THREE.Group | undefined;
   try {
+    status.textContent = `Loading ${file.name}...`;
+    undoStack.length = 0;
     const gltf = await new GLTFLoader().loadAsync(url);
+    candidate = normalizeImportedModel(gltf.scene, file.name);
     if (importedModel) {
+      clearModelCollision(false);
       scene.remove(importedModel);
       disposeObject(importedModel);
     }
-    importedModel = normalizeImportedModel(gltf.scene, file.name);
-    scene.add(importedModel);
-    snapAssetToFloor(importedModel);
-    selectAsset(importedModel);
-    status.textContent = `Loaded ${file.name}. Move it with the gizmo, then create hitboxes.`;
+    importedModel = candidate;
+    scene.add(candidate);
+    snapAssetToFloor(candidate);
+    selectAsset(candidate);
+    const result = rebuildSmartModelCollision(true);
+    if (!result?.created) throw new Error("the model does not contain usable triangle geometry");
+    status.textContent = result.optimized
+      ? `Loaded ${file.name}. Its ${result.sourceTriangles.toLocaleString()} visual triangles were reduced to one smooth ${result.triangles.length.toLocaleString()}-triangle game collision mesh.`
+      : `Loaded ${file.name} with one exact ${result.triangles.length.toLocaleString()}-triangle collision mesh.`;
   } catch (error) {
+    if (candidate && importedModel === candidate) {
+      clearModelCollision(false);
+      scene.remove(candidate);
+      disposeObject(candidate);
+      importedModel = undefined;
+      selectedAsset = undefined;
+      transform.detach();
+      fillFields(undefined);
+      renderList();
+    }
     status.textContent = `Could not load model: ${error instanceof Error ? error.message : String(error)}`;
   } finally {
     URL.revokeObjectURL(url);
@@ -778,8 +1238,12 @@ function normalizeImportedModel(model: THREE.Group, name: string): THREE.Group {
   root.updateMatrixWorld(true);
 
   const bounds = new THREE.Box3().setFromObject(root);
+  if (bounds.isEmpty()) throw new Error("the model has no visible mesh geometry");
   const size = bounds.getSize(new THREE.Vector3());
   const center = bounds.getCenter(new THREE.Vector3());
+  if (![size.x, size.y, size.z, center.x, center.y, center.z].every(Number.isFinite)) {
+    throw new Error("the model contains invalid vertex positions");
+  }
   const scale = Math.min(1, 30 / Math.max(size.x, size.y, size.z, 0.001));
   model.position.sub(center);
   root.scale.setScalar(scale);
@@ -797,7 +1261,7 @@ function normalizeImportedModel(model: THREE.Group, name: string): THREE.Group {
 function getModelMeshes(model: THREE.Object3D): THREE.Mesh[] {
   const meshes: THREE.Mesh[] = [];
   model.traverse((child) => {
-    if (child instanceof THREE.Mesh) meshes.push(child);
+    if (child instanceof THREE.Mesh && !child.userData.isCollisionMesh) meshes.push(child);
   });
   return meshes;
 }
@@ -810,52 +1274,167 @@ function disposeObject(object: THREE.Object3D): void {
   });
 }
 
-function createCollisionFromModelBounds(): void {
+function rebuildSmartModelCollision(automatic: boolean): ModelCollisionResult | undefined {
   if (!importedModel) {
     status.textContent = "Import a GLB model first.";
-    return;
+    return undefined;
   }
   importedModel.updateMatrixWorld(true);
-  const bounds = new THREE.Box3().setFromObject(importedModel);
-  const size = bounds.getSize(new THREE.Vector3());
-  const center = bounds.getCenter(new THREE.Vector3());
-  selectBox(addBox({
-    id: uniqueId("model-bounds"),
-    position: roundTuple([center.x, center.y, center.z]),
-    size: roundTuple([size.x, size.y, size.z]),
-    color: "#f4d24f",
-    kind: "crate",
-    solid: true
-  }));
+  const collision = buildModelCollision(importedModel);
+  clearModelCollision(false);
+  if (collision.localVertices.length < 3 || collision.triangles.length < 1) return { ...collision, created: 0 };
+  const created = addHull({
+    id: uniqueId("model-exact-collision"),
+    localVertices: collision.localVertices,
+    triangles: collision.triangles,
+    color: MODEL_COLLISION_COLOR,
+    kind: "hull",
+    solid: true,
+    generatedFrom: "model",
+    optimizedFromModel: collision.optimized,
+    linkedToModel: true
+  });
+  created.mesh.updateMatrixWorld(true);
+  if (collisionEditMode) selectHull(created);
+  else selectAsset(importedModel);
+  if (!automatic) {
+    status.textContent = collision.optimized
+      ? `Built one smooth ${collision.triangles.length.toLocaleString()}-triangle collider from ${collision.sourceTriangles.toLocaleString()} visual triangles. Turn Edit Collision on to adjust it.`
+      : `Copied the exact model mesh: ${collision.triangles.length.toLocaleString()} collision triangles. Turn Edit Collision on to adjust it separately.`;
+  }
+  exportJson();
+  return { ...collision, created: 1 };
+}
+
+function clearModelCollision(showStatus: boolean): void {
+  const generatedHulls = hulls.filter((hull) => hull.generatedFrom === "model");
+  const selectedWasGenerated = selectedHull ? generatedHulls.includes(selectedHull) : false;
+  for (const hull of generatedHulls) removeEditableHull(hull);
+  if (selectedWasGenerated) selectHull(undefined);
+  else renderList();
+  const removed = generatedHulls.length;
+  if (showStatus) status.textContent = `Removed ${removed} generated model collision shape${removed === 1 ? "" : "s"}.`;
   exportJson();
 }
 
-function createCollisionFromModelMeshes(): void {
-  if (!importedModel) {
-    status.textContent = "Import a GLB model first.";
-    return;
+function buildModelCollision(model: THREE.Group): ModelCollisionBuild {
+  const meshes = getModelMeshes(model).filter((mesh) => mesh.visible && Boolean(mesh.geometry.getAttribute("position")));
+  const sourceTriangles = meshes.reduce((total, mesh) => {
+    const positions = mesh.geometry.getAttribute("position");
+    return total + Math.floor((mesh.geometry.index?.count ?? positions?.count ?? 0) / 3);
+  }, 0);
+  if (sourceTriangles < 1) return { localVertices: [], triangles: [], sourceTriangles: 0, optimized: false };
+  if (sourceTriangles <= MAX_EXACT_COLLISION_TRIANGLES) {
+    return { ...buildExactModelCollision(model, meshes), sourceTriangles, optimized: false };
   }
-  const created: EditableBox[] = [];
-  importedModel.updateMatrixWorld(true);
-  importedModel.traverse((child) => {
-    if (!(child instanceof THREE.Mesh) || created.length >= 80) return;
-    const bounds = new THREE.Box3().setFromObject(child);
-    if (bounds.isEmpty()) return;
-    const size = bounds.getSize(new THREE.Vector3());
-    if (Math.max(size.x, size.y, size.z) < 0.15) return;
-    const center = bounds.getCenter(new THREE.Vector3());
-    created.push(addBox({
-      id: uniqueId(`mesh-${child.name || "part"}`.replace(/[^a-z0-9-_]/gi, "-").toLowerCase()),
-      position: roundTuple([center.x, center.y, center.z]),
-      size: roundTuple([size.x, size.y, size.z]),
-      color: "#57b9a9",
-      kind: "crate",
-      solid: true
-    }));
-  });
-  selectBox(created[0] ?? selected);
-  status.textContent = `Created ${created.length} mesh collision box${created.length === 1 ? "" : "es"}.`;
-  exportJson();
+  return { ...buildSmoothModelCollision(model, meshes), sourceTriangles, optimized: true };
+}
+
+function buildExactModelCollision(model: THREE.Group, meshes = getModelMeshes(model)): Pick<ModelCollisionBuild, "localVertices" | "triangles"> {
+  model.updateMatrixWorld(true);
+  const inverseRoot = model.matrixWorld.clone().invert();
+  const vertices: [number, number, number][] = [];
+  const triangles: [number, number, number][] = [];
+  const vertexMap = new Map<string, number>();
+  const point = new THREE.Vector3();
+
+  for (const mesh of meshes) {
+    if (mesh.userData.isCollisionMesh || !mesh.visible) continue;
+    const positions = mesh.geometry.getAttribute("position");
+    if (!positions) continue;
+    const index = mesh.geometry.index;
+    const faceCount = Math.floor((index?.count ?? positions.count) / 3);
+    const toRoot = inverseRoot.clone().multiply(mesh.matrixWorld);
+    for (let face = 0; face < faceCount; face += 1) {
+      const triangle: number[] = [];
+      for (let corner = 0; corner < 3; corner += 1) {
+        const vertexIndex = index ? index.getX(face * 3 + corner) : face * 3 + corner;
+        mesh.getVertexPosition(vertexIndex, point);
+        point.applyMatrix4(toRoot);
+        const key = `${point.x.toFixed(5)},${point.y.toFixed(5)},${point.z.toFixed(5)}`;
+        let mergedIndex = vertexMap.get(key);
+        if (mergedIndex === undefined) {
+          mergedIndex = vertices.length;
+          vertexMap.set(key, mergedIndex);
+          vertices.push([point.x, point.y, point.z]);
+        }
+        triangle.push(mergedIndex);
+      }
+      if (triangle[0] !== triangle[1] && triangle[1] !== triangle[2] && triangle[0] !== triangle[2]) {
+        triangles.push(triangle as [number, number, number]);
+      }
+    }
+  }
+  return { localVertices: vertices, triangles };
+}
+
+function buildSmoothModelCollision(
+  model: THREE.Group,
+  meshes: THREE.Mesh[]
+): Pick<ModelCollisionBuild, "localVertices" | "triangles"> {
+  model.updateMatrixWorld(true);
+  const inverseRoot = model.matrixWorld.clone().invert();
+  const totalPositions = meshes.reduce((total, mesh) => total + (mesh.geometry.getAttribute("position")?.count ?? 0), 0);
+  const sampleStride = Math.max(1, Math.ceil(totalPositions / MAX_OPTIMIZED_COLLISION_POINTS));
+  const points: THREE.Vector3[] = [];
+  const pointKeys = new Set<string>();
+  const point = new THREE.Vector3();
+  let globalPositionIndex = 0;
+
+  for (const mesh of meshes) {
+    const positions = mesh.geometry.getAttribute("position");
+    if (!positions?.count) continue;
+    const toRoot = inverseRoot.clone().multiply(mesh.matrixWorld);
+    for (let index = 0; index < positions.count; index += 1) {
+      const shouldSample = globalPositionIndex % sampleStride === 0;
+      globalPositionIndex += 1;
+      if (!shouldSample) continue;
+      mesh.getVertexPosition(index, point);
+      point.applyMatrix4(toRoot);
+      if (![point.x, point.y, point.z].every(Number.isFinite)) continue;
+      const key = `${point.x.toFixed(4)},${point.y.toFixed(4)},${point.z.toFixed(4)}`;
+      if (pointKeys.has(key)) continue;
+      pointKeys.add(key);
+      points.push(point.clone());
+    }
+  }
+  if (points.length < 4) throw new Error("the model does not have enough valid points for collision");
+
+  let geometry: THREE.BufferGeometry;
+  try {
+    geometry = new ConvexGeometry(points);
+  } catch {
+    throw new Error("the model geometry is flat or invalid and a collision mesh could not be generated");
+  }
+  try {
+    const positions = geometry.getAttribute("position");
+    const localVertices: [number, number, number][] = [];
+    const triangles: [number, number, number][] = [];
+    const vertexMap = new Map<string, number>();
+    for (let face = 0; face < Math.floor(positions.count / 3); face += 1) {
+      const triangle: number[] = [];
+      for (let corner = 0; corner < 3; corner += 1) {
+        const index = face * 3 + corner;
+        const x = positions.getX(index);
+        const y = positions.getY(index);
+        const z = positions.getZ(index);
+        const key = `${x.toFixed(5)},${y.toFixed(5)},${z.toFixed(5)}`;
+        let mergedIndex = vertexMap.get(key);
+        if (mergedIndex === undefined) {
+          mergedIndex = localVertices.length;
+          vertexMap.set(key, mergedIndex);
+          localVertices.push([x, y, z]);
+        }
+        triangle.push(mergedIndex);
+      }
+      if (triangle[0] !== triangle[1] && triangle[1] !== triangle[2] && triangle[0] !== triangle[2]) {
+        triangles.push(triangle as [number, number, number]);
+      }
+    }
+    return { localVertices, triangles };
+  } finally {
+    geometry.dispose();
+  }
 }
 
 function exportJson(): void {
@@ -864,7 +1443,8 @@ function exportJson(): void {
     floorColor,
     borderColor,
     asset: importedModel ? assetToExport(importedModel) : undefined,
-    boxes: boxes.map(boxToEditableInput)
+    boxes: boxes.map(boxToEditableInput),
+    hulls: hulls.map(hullToWorldHull)
   }, null, 2);
 }
 
@@ -873,7 +1453,11 @@ function exportCode(): void {
     const data = boxToEditableInput(box);
     return `  { id: ${JSON.stringify(data.id)}, position: [${data.position.join(", ")}], size: [${data.size.join(", ")}], color: ${JSON.stringify(data.color)}, kind: ${JSON.stringify(data.kind)}, solid: ${data.solid} },`;
   });
-  exportText.value = `export const WORLD_SIZE = ${formatNumber(worldSize)};\nexport const WORLD_WALL_THICKNESS = 1;\n// Map maker floor color: ${floorColor}\n\nexport const WORLD_BOXES: readonly WorldBox[] = [\n${lines.join("\n")}\n] as const;`;
+  const hullLines = hulls.map((hull) => {
+    const data = hullToWorldHull(hull);
+    return `  { id: ${JSON.stringify(data.id)}, vertices: ${JSON.stringify(data.vertices)}, triangles: ${JSON.stringify(data.triangles)}, color: ${JSON.stringify(data.color)}, kind: "hull", solid: ${data.solid} },`;
+  });
+  exportText.value = `export const WORLD_SIZE = ${formatNumber(worldSize)};\nexport const WORLD_WALL_THICKNESS = 1;\n// Map maker floor color: ${floorColor}\n\nexport const WORLD_BOXES: readonly WorldBox[] = [\n${lines.join("\n")}\n] as const;\n\nexport const WORLD_HULLS: readonly WorldHull[] = [\n${hullLines.join("\n")}\n] as const;`;
 }
 
 function importBoxesFromText(): void {
@@ -884,7 +1468,10 @@ function importBoxesFromText(): void {
       : parsed && typeof parsed === "object" && Array.isArray((parsed as { boxes?: unknown }).boxes)
         ? (parsed as { boxes: unknown[] }).boxes
         : undefined;
-    if (!rawBoxes) throw new Error("Expected an array or { boxes: [...] }");
+    const rawHulls = parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray((parsed as { hulls?: unknown }).hulls)
+      ? (parsed as { hulls: unknown[] }).hulls
+      : [];
+    if (!rawBoxes) throw new Error("Expected an array or { boxes: [...], hulls: [...] }");
 
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const payload = parsed as { worldSize?: unknown; floorColor?: unknown; borderColor?: unknown };
@@ -905,7 +1492,8 @@ function importBoxesFromText(): void {
       solid: box.solid !== false
     };
     }));
-    status.textContent = `Imported ${rawBoxes.length} collision boxes.`;
+    loadHulls(rawHulls.map((rawHull, index) => worldHullToEditableInput(normalizeWorldHull(rawHull, index))));
+    status.textContent = `Imported ${rawBoxes.length} collision boxes and ${rawHulls.length} triangle collision mesh${rawHulls.length === 1 ? "" : "es"}.`;
   } catch (error) {
     status.textContent = `Import failed: ${error instanceof Error ? error.message : String(error)}`;
   }
@@ -945,7 +1533,7 @@ function moveTestPlayer(dt: number): void {
 function moveSelectedItem(dt: number): void {
   if (testMode || (transform as unknown as { dragging?: boolean }).dragging) return;
   if (isTypingInForm()) return;
-  const target = selected?.mesh ?? selectedAsset;
+  const target = selected?.mesh ?? selectedHull?.mesh ?? selectedAsset;
   if (!target) return;
 
   const forwardInput = Number(keys.has("KeyW")) - Number(keys.has("KeyS"));
@@ -974,6 +1562,10 @@ function moveSelectedItem(dt: number): void {
     selected.position = roundTuple([selected.mesh.position.x, selected.mesh.position.y, selected.mesh.position.z]);
     fillFields(selected);
     renderList();
+  } else if (selectedHull) {
+    if (transformMode === "translate") snapHullToFloor(selectedHull);
+    fillFields(undefined, selectedHull);
+    renderList();
   } else if (selectedAsset) {
     if (transformMode === "translate") snapAssetToFloor(selectedAsset);
     selectedTitle.textContent = `ASSET: ${selectedAsset.name || "MODEL"}`;
@@ -997,7 +1589,77 @@ function collidesWithBoxes(position: THREE.Vector3): boolean {
     const maxZ = box.position[2] + box.size[2] / 2 + PLAYER_RADIUS;
     if (position.x >= minX && position.x <= maxX && PLAYER_HEIGHT >= minY && position.y <= maxY && position.z >= minZ && position.z <= maxZ) return true;
   }
+  for (const hull of hulls) {
+    if (!hull.solid) continue;
+    const worldHull = hullToWorldHull(hull);
+    const vertices = worldHull.vertices;
+    const minY = Math.min(...vertices.map((vertex) => vertex[1]));
+    const maxY = Math.max(...vertices.map((vertex) => vertex[1]));
+    if (position.y > maxY || position.y + PLAYER_HEIGHT < minY) continue;
+    if (worldHull.triangles?.length) {
+      const top = worldHullHeightAt(worldHull, position.x, position.z);
+      if (top !== undefined && position.y <= top && position.y + PLAYER_HEIGHT >= minY) return true;
+      for (const triangle of worldHull.triangles) {
+        const a = vertices[triangle[0]];
+        const b = vertices[triangle[1]];
+        const c = vertices[triangle[2]];
+        if (!a || !b || !c) continue;
+        const triangleMinY = Math.min(a[1], b[1], c[1]);
+        const triangleMaxY = Math.max(a[1], b[1], c[1]);
+        if (position.y > triangleMaxY || position.y + PLAYER_HEIGHT < triangleMinY) continue;
+        if (circleTouchesTriangle2D(position.x, position.z, PLAYER_RADIUS, a, b, c)) return true;
+      }
+      continue;
+    }
+    const footprint = convexHull2D(vertices.map((vertex) => [vertex[0], vertex[2]]));
+    if (pointInsideExpandedPolygon(position.x, position.z, footprint, PLAYER_RADIUS)) return true;
+  }
   return false;
+}
+
+function circleTouchesTriangle2D(
+  x: number,
+  z: number,
+  radius: number,
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  c: readonly [number, number, number]
+): boolean {
+  const denominator = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2]);
+  if (Math.abs(denominator) > 1e-9) {
+    const first = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / denominator;
+    const second = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / denominator;
+    if (first >= 0 && second >= 0 && first + second <= 1) return true;
+  }
+  const radiusSquared = radius * radius;
+  return pointSegmentDistanceSquared2D(x, z, a[0], a[2], b[0], b[2]) <= radiusSquared
+    || pointSegmentDistanceSquared2D(x, z, b[0], b[2], c[0], c[2]) <= radiusSquared
+    || pointSegmentDistanceSquared2D(x, z, c[0], c[2], a[0], a[2]) <= radiusSquared;
+}
+
+function pointSegmentDistanceSquared2D(x: number, z: number, ax: number, az: number, bx: number, bz: number): number {
+  const edgeX = bx - ax;
+  const edgeZ = bz - az;
+  const lengthSquared = edgeX * edgeX + edgeZ * edgeZ;
+  const amount = lengthSquared > 0 ? THREE.MathUtils.clamp(((x - ax) * edgeX + (z - az) * edgeZ) / lengthSquared, 0, 1) : 0;
+  const dx = x - (ax + edgeX * amount);
+  const dz = z - (az + edgeZ * amount);
+  return dx * dx + dz * dz;
+}
+
+function pointInsideExpandedPolygon(x: number, z: number, points: readonly (readonly [number, number])[], radius: number): boolean {
+  if (points.length < 3) return false;
+  for (let index = 0; index < points.length; index += 1) {
+    const start = points[index]!;
+    const end = points[(index + 1) % points.length]!;
+    const edgeX = end[0] - start[0];
+    const edgeZ = end[1] - start[1];
+    const length = Math.hypot(edgeX, edgeZ);
+    const normalX = edgeZ / length;
+    const normalZ = -edgeX / length;
+    if ((x - start[0]) * normalX + (z - start[1]) * normalZ > radius) return false;
+  }
+  return true;
 }
 
 function animate(): void {
@@ -1028,6 +1690,77 @@ function boxToEditableInput(box: Omit<EditableBox, "mesh" | "edges"> | WorldBox)
   };
 }
 
+function hullToEditableInput(
+  hull: EditableHull,
+  preserveLink = false,
+  cloneGeometry = true
+): Omit<EditableHull, "mesh" | "edges"> {
+  return {
+    id: hull.id,
+    localVertices: cloneGeometry ? hull.localVertices.map((vertex) => [...vertex] as [number, number, number]) : hull.localVertices,
+    triangles: cloneGeometry ? hull.triangles.map((triangle) => [...triangle] as [number, number, number]) : hull.triangles,
+    color: hull.color,
+    kind: "hull",
+    solid: hull.solid,
+    generatedFrom: preserveLink ? hull.generatedFrom : undefined,
+    optimizedFromModel: preserveLink ? hull.optimizedFromModel : undefined,
+    linkedToModel: preserveLink ? hull.linkedToModel : false
+  };
+}
+
+function worldHullToEditableInput(hull: WorldHull): Omit<EditableHull, "mesh" | "edges"> {
+  const points = hull.vertices.map((vertex) => new THREE.Vector3(...vertex));
+  const center = new THREE.Box3().setFromPoints(points).getCenter(new THREE.Vector3());
+  return {
+    id: hull.id,
+    localVertices: points.map((point) => roundTuple([point.x - center.x, point.y - center.y, point.z - center.z])),
+    triangles: hull.triangles?.map((triangle) => [...triangle] as [number, number, number]) ?? [],
+    color: hull.color,
+    kind: "hull",
+    solid: hull.solid,
+    initialPosition: roundTuple([center.x, center.y, center.z])
+  };
+}
+
+function normalizeWorldHull(value: unknown, index: number): WorldHull {
+  const raw = value as Partial<WorldHull>;
+  const vertices = Array.isArray(raw.vertices)
+    ? raw.vertices.map((vertex) => tuple(vertex, [0, 0, 0])).filter((vertex) => vertex.every(Number.isFinite))
+    : [];
+  if (vertices.length < 4) throw new Error(`Hull ${index + 1} needs at least four vertices`);
+  const triangles = Array.isArray(raw.triangles)
+    ? raw.triangles.map((triangle) => tuple(triangle, [0, 0, 0]).map(Math.trunc) as [number, number, number])
+      .filter((triangle) => triangle.every((vertex) => vertex >= 0 && vertex < vertices.length))
+    : undefined;
+  return {
+    id: String(raw.id ?? `hull-${index + 1}`),
+    vertices,
+    triangles,
+    color: String(raw.color ?? MODEL_COLLISION_COLOR),
+    kind: "hull",
+    solid: raw.solid !== false
+  };
+}
+
+function getHullWorldVertices(hull: EditableHull): [number, number, number][] {
+  hull.mesh.updateMatrixWorld(true);
+  return hull.localVertices.map((vertex) => {
+    const point = new THREE.Vector3(...vertex).applyMatrix4(hull.mesh.matrixWorld);
+    return roundTuple([point.x, point.y, point.z]);
+  });
+}
+
+function hullToWorldHull(hull: EditableHull): WorldHull {
+  return {
+    id: hull.id,
+    vertices: getHullWorldVertices(hull),
+    triangles: hull.triangles.map((triangle) => [...triangle] as [number, number, number]),
+    color: hull.color,
+    kind: "hull",
+    solid: hull.solid
+  };
+}
+
 function assetToExport(asset: THREE.Object3D): { name: string; position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number] } {
   return {
     name: asset.name || "model",
@@ -1041,7 +1774,7 @@ function uniqueId(base: string): string {
   const clean = base.replace(/[^a-z0-9-_]/gi, "-").toLowerCase() || "box";
   let id = clean;
   let suffix = 2;
-  while (boxes.some((box) => box.id === id)) id = `${clean}-${suffix++}`;
+  while (boxes.some((box) => box.id === id) || hulls.some((hull) => hull.id === id)) id = `${clean}-${suffix++}`;
   return id;
 }
 

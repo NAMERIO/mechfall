@@ -7,10 +7,12 @@ import {
   PROTOCOL_VERSION,
   SPAWN_POINTS,
   WORLD_BOXES,
+  WORLD_HULLS,
   clamp,
   encodeServerMessage,
   isHexColor,
   isPaintPart,
+  worldHullFootprint,
   type ClientMessage,
   type GameEvent,
   type InputPayload,
@@ -533,5 +535,84 @@ function firstWorldHit(origin: { x: number; y: number; z: number }, direction: {
     }
     if (enter >= 0 && enter <= exit) nearest = Math.min(nearest, enter);
   }
+  for (const hull of WORLD_HULLS) {
+    if (!hull.solid || hull.vertices.length < 4) continue;
+    if (hull.triangles?.length) {
+      for (const triangle of hull.triangles) {
+        const a = hull.vertices[triangle[0]];
+        const b = hull.vertices[triangle[1]];
+        const c = hull.vertices[triangle[2]];
+        if (!a || !b || !c) continue;
+        const distance = rayTriangleDistance(origin, direction, a, b, c);
+        if (distance !== undefined && distance <= nearest) nearest = distance;
+      }
+      continue;
+    }
+    const footprint = worldHullFootprint(hull);
+    let enter = 0;
+    let exit = nearest;
+    const yRate = direction.y;
+    if (Math.abs(yRate) < 1e-7) {
+      if (origin.y < footprint.minY || origin.y > footprint.maxY) continue;
+    } else {
+      const first = (footprint.minY - origin.y) / yRate;
+      const second = (footprint.maxY - origin.y) / yRate;
+      enter = Math.max(enter, Math.min(first, second));
+      exit = Math.min(exit, Math.max(first, second));
+    }
+    for (let index = 0; index < footprint.points.length && enter <= exit; index += 1) {
+      const start = footprint.points[index]!;
+      const end = footprint.points[(index + 1) % footprint.points.length]!;
+      const edgeX = end[0] - start[0];
+      const edgeZ = end[1] - start[1];
+      const length = Math.hypot(edgeX, edgeZ);
+      if (length <= Number.EPSILON) continue;
+      const normalX = edgeZ / length;
+      const normalZ = -edgeX / length;
+      const distance = (origin.x - start[0]) * normalX + (origin.z - start[1]) * normalZ;
+      const rate = direction.x * normalX + direction.z * normalZ;
+      if (Math.abs(rate) < 1e-7) {
+        if (distance > 0) enter = Number.POSITIVE_INFINITY;
+        continue;
+      }
+      const crossing = -distance / rate;
+      if (rate < 0) enter = Math.max(enter, crossing);
+      else exit = Math.min(exit, crossing);
+    }
+    if (enter >= 0 && enter <= exit) nearest = Math.min(nearest, enter);
+  }
   return nearest;
+}
+
+function rayTriangleDistance(
+  origin: { x: number; y: number; z: number },
+  direction: { x: number; y: number; z: number },
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  c: readonly [number, number, number]
+): number | undefined {
+  const edge1X = b[0] - a[0];
+  const edge1Y = b[1] - a[1];
+  const edge1Z = b[2] - a[2];
+  const edge2X = c[0] - a[0];
+  const edge2Y = c[1] - a[1];
+  const edge2Z = c[2] - a[2];
+  const crossX = direction.y * edge2Z - direction.z * edge2Y;
+  const crossY = direction.z * edge2X - direction.x * edge2Z;
+  const crossZ = direction.x * edge2Y - direction.y * edge2X;
+  const determinant = edge1X * crossX + edge1Y * crossY + edge1Z * crossZ;
+  if (Math.abs(determinant) < 1e-8) return undefined;
+  const inverse = 1 / determinant;
+  const offsetX = origin.x - a[0];
+  const offsetY = origin.y - a[1];
+  const offsetZ = origin.z - a[2];
+  const u = (offsetX * crossX + offsetY * crossY + offsetZ * crossZ) * inverse;
+  if (u < 0 || u > 1) return undefined;
+  const qX = offsetY * edge1Z - offsetZ * edge1Y;
+  const qY = offsetZ * edge1X - offsetX * edge1Z;
+  const qZ = offsetX * edge1Y - offsetY * edge1X;
+  const v = (direction.x * qX + direction.y * qY + direction.z * qZ) * inverse;
+  if (v < 0 || u + v > 1) return undefined;
+  const distance = (edge2X * qX + edge2Y * qY + edge2Z * qZ) * inverse;
+  return distance >= 0 ? distance : undefined;
 }

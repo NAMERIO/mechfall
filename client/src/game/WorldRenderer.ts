@@ -1,10 +1,14 @@
 import * as THREE from "three";
+import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
   GAME,
   WORLD_BOXES,
+  WORLD_HULLS,
   WORLD_SIZE,
+  worldHullHeightAt,
+  worldHullFootprint,
   type PaintPart,
   type PaintStroke,
   type PlayerPaintState,
@@ -634,6 +638,29 @@ export class WorldRenderer {
       this.sampleSurfaces.push(mesh);
       this.scene.add(mesh);
       this.addBoxDetails(mesh, box.kind);
+    }
+
+    for (const hull of WORLD_HULLS) {
+      if (hull.vertices.length < 4) continue;
+      const geometry = hull.triangles?.length
+        ? new THREE.BufferGeometry()
+        : new ConvexGeometry(hull.vertices.map((vertex) => new THREE.Vector3(...vertex)));
+      if (hull.triangles?.length) {
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(hull.vertices.flat(), 3));
+        geometry.setIndex(hull.triangles.flat());
+        geometry.computeVertexNormals();
+      }
+      const material = new THREE.MeshStandardMaterial({ color: hull.color, roughness: 0.7 });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData.sampleColor = hull.color;
+      this.sampleSurfaces.push(mesh);
+      this.scene.add(mesh);
+      mesh.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry, 18),
+        new THREE.LineBasicMaterial({ color: "#273138", transparent: true, opacity: 0.22 })
+      ));
     }
 
     this.addFactoryDetails();
@@ -1269,6 +1296,38 @@ function isCameraPositionSafe(position: THREE.Vector3): boolean {
       && position.z >= box.position[2] - box.size[2] / 2 - CAMERA_COLLISION_RADIUS
       && position.z <= box.position[2] + box.size[2] / 2 + CAMERA_COLLISION_RADIUS
     ) return false;
+  }
+  for (const hull of WORLD_HULLS) {
+    if (!hull.solid || hull.vertices.length < 4) continue;
+    const footprint = worldHullFootprint(hull);
+    if (hull.triangles?.length) {
+      const top = worldHullHeightAt(hull, position.x, position.z);
+      if (top !== undefined && position.y >= footprint.minY - CAMERA_COLLISION_RADIUS && position.y <= top + CAMERA_COLLISION_RADIUS) return false;
+      continue;
+    }
+    if (position.y < footprint.minY - CAMERA_COLLISION_RADIUS || position.y > footprint.maxY + CAMERA_COLLISION_RADIUS) continue;
+    if (pointInsideExpandedHull(position.x, position.z, footprint.points, CAMERA_COLLISION_RADIUS)) return false;
+  }
+  return true;
+}
+
+function pointInsideExpandedHull(
+  x: number,
+  z: number,
+  points: readonly (readonly [number, number])[],
+  radius: number
+): boolean {
+  if (points.length < 3) return false;
+  for (let index = 0; index < points.length; index += 1) {
+    const start = points[index]!;
+    const end = points[(index + 1) % points.length]!;
+    const edgeX = end[0] - start[0];
+    const edgeZ = end[1] - start[1];
+    const length = Math.hypot(edgeX, edgeZ);
+    if (length <= Number.EPSILON) continue;
+    const normalX = edgeZ / length;
+    const normalZ = -edgeX / length;
+    if ((x - start[0]) * normalX + (z - start[1]) * normalZ > radius) return false;
   }
   return true;
 }

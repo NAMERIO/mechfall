@@ -1,4 +1,16 @@
-import { GAME, WORLD_BOXES, WORLD_SIZE, WORLD_WALL_THICKNESS, clamp, type SurfaceClingState, type Vec3 } from "@mechfall/shared";
+import {
+  GAME,
+  WORLD_BOXES,
+  WORLD_HULLS,
+  WORLD_SIZE,
+  WORLD_WALL_THICKNESS,
+  clamp,
+  worldHullHeightAt,
+  worldHullFootprint,
+  type SurfaceClingState,
+  type Vec3,
+  type WorldHull
+} from "@mechfall/shared";
 
 export interface PhysicsBody {
   position: Vec3;
@@ -6,6 +18,17 @@ export interface PhysicsBody {
 }
 
 export type ClingMoveResult = "attached" | "released" | "mantled";
+
+interface HullSurface {
+  hull: WorldHull;
+  points: readonly (readonly [number, number])[];
+  minY: number;
+  maxY: number;
+}
+
+const HULL_SURFACES: readonly HullSurface[] = WORLD_HULLS
+  .filter((hull) => hull.solid && hull.vertices.length >= 4)
+  .map((hull) => ({ hull, ...worldHullFootprint(hull) }));
 
 export function moveBody(
   body: PhysicsBody,
@@ -77,7 +100,11 @@ export function moveClingingBody(
   dt: number
 ): ClingMoveResult {
   const box = WORLD_BOXES.find((candidate) => candidate.solid && candidate.id === cling.surfaceId);
-  if (!box || Math.abs(cling.normalX) + Math.abs(cling.normalZ) !== 1) return "released";
+  if (!box) {
+    const surface = HULL_SURFACES.find((candidate) => candidate.hull.id === cling.surfaceId);
+    return surface ? moveClingingOnHull(body, cling, yaw, sideways, vertical, dt, surface) : "released";
+  }
+  if (Math.abs(cling.normalX) + Math.abs(cling.normalZ) !== 1) return "released";
   const previousX = body.position.x;
   const previousY = body.position.y;
   const previousZ = body.position.z;
@@ -159,6 +186,91 @@ export function moveClingingBody(
   return "attached";
 }
 
+function moveClingingOnHull(
+  body: PhysicsBody,
+  cling: SurfaceClingState,
+  yaw: number,
+  sideways: number,
+  vertical: number,
+  dt: number,
+  surface: HullSurface
+): ClingMoveResult {
+  let matched: { start: readonly [number, number]; end: readonly [number, number]; normalX: number; normalZ: number } | undefined;
+  for (let index = 0; index < surface.points.length; index += 1) {
+    const start = surface.points[index]!;
+    const end = surface.points[(index + 1) % surface.points.length]!;
+    const edge = normalizedHullEdge(start, end);
+    if (!edge || edge.normalX * cling.normalX + edge.normalZ * cling.normalZ < 0.999) continue;
+    matched = { start, end, normalX: edge.normalX, normalZ: edge.normalZ };
+    break;
+  }
+  if (!matched) return "released";
+
+  const previousX = body.position.x;
+  const previousY = body.position.y;
+  const previousZ = body.position.z;
+  const tangentX = matched.normalZ;
+  const tangentZ = -matched.normalX;
+  const contactDistance = playerContactDistance(yaw, matched.normalX, matched.normalZ);
+  const normalCoordinate = matched.start[0] * matched.normalX + matched.start[1] * matched.normalZ + contactDistance;
+  const currentTangent = body.position.x * tangentX + body.position.z * tangentZ;
+  const contactX = matched.normalX * normalCoordinate + tangentX * currentTangent;
+  const contactZ = matched.normalZ * normalCoordinate + tangentZ * currentTangent;
+  if (Math.hypot(body.position.x - contactX, body.position.z - contactZ) > CLING_LOST_DISTANCE) return "released";
+
+  const tangentA = matched.start[0] * tangentX + matched.start[1] * tangentZ;
+  const tangentB = matched.end[0] * tangentX + matched.end[1] * tangentZ;
+  const tangentMin = Math.min(tangentA, tangentB);
+  const tangentMax = Math.max(tangentA, tangentB);
+  const lowest = Math.max(0, surface.minY - CLING_BODY_HEIGHT + CLING_MIN_OVERLAP);
+  const highest = Math.max(lowest, surface.maxY - CLING_MIN_OVERLAP);
+  if (body.position.y < lowest - CLING_EDGE_RELEASE_EPSILON
+      || body.position.y > highest + CLING_EDGE_RELEASE_EPSILON
+      || currentTangent < tangentMin - CLING_EDGE_RELEASE_EPSILON
+      || currentTangent > tangentMax + CLING_EDGE_RELEASE_EPSILON) return "released";
+
+  const sideSpeed = clamp(sideways, -1, 1) * GAME.climbSpeed;
+  const climbSpeed = clamp(vertical, -1, 1) * GAME.climbSpeed;
+  const nextTangent = currentTangent + sideSpeed * dt;
+  const nextY = body.position.y + climbSpeed * dt;
+  const clampedTangent = clamp(nextTangent, tangentMin, tangentMax);
+  body.position.x = clamp(matched.normalX * normalCoordinate + tangentX * clampedTangent, -worldLimit(yaw, 1, 0, body.position.y), worldLimit(yaw, 1, 0, body.position.y));
+  body.position.z = clamp(matched.normalZ * normalCoordinate + tangentZ * clampedTangent, -worldLimit(yaw, 0, 1, body.position.y), worldLimit(yaw, 0, 1, body.position.y));
+  body.position.y = clamp(nextY, lowest, highest);
+  if (dt > 0) {
+    body.velocity.x = (body.position.x - previousX) / dt;
+    body.velocity.y = (body.position.y - previousY) / dt;
+    body.velocity.z = (body.position.z - previousZ) / dt;
+  } else {
+    body.velocity.x = 0;
+    body.velocity.y = 0;
+    body.velocity.z = 0;
+  }
+
+  const leavingSide = (sideSpeed < 0 && nextTangent < tangentMin - CLING_EDGE_RELEASE_EPSILON)
+    || (sideSpeed > 0 && nextTangent > tangentMax + CLING_EDGE_RELEASE_EPSILON);
+  const leavingBottom = climbSpeed < 0 && nextY < lowest - CLING_EDGE_RELEASE_EPSILON;
+  const leavingTop = climbSpeed > 0 && nextY > highest + CLING_EDGE_RELEASE_EPSILON;
+  if (leavingTop && !leavingSide) {
+    const mantleDistance = contactDistance * 2 + MANTLE_TOP_INSET;
+    const targetX = clamp(body.position.x - matched.normalX * mantleDistance, -worldLimit(yaw, 1, 0, surface.maxY), worldLimit(yaw, 1, 0, surface.maxY));
+    const targetZ = clamp(body.position.z - matched.normalZ * mantleDistance, -worldLimit(yaw, 0, 1, surface.maxY), worldLimit(yaw, 0, 1, surface.maxY));
+    if (canOccupyMantleTarget(surface.hull.id, targetX, targetZ, surface.maxY, yaw)) {
+      body.position.x = targetX;
+      body.position.z = targetZ;
+      body.position.y = surface.maxY;
+      body.velocity.x = 0;
+      body.velocity.y = 0;
+      body.velocity.z = 0;
+      return "mantled";
+    }
+    body.velocity.y = 0;
+    return "attached";
+  }
+  if (leavingSide || leavingBottom) return "released";
+  return "attached";
+}
+
 function moveVertically(body: PhysicsBody, yaw: number, dt: number): void {
   const previousY = body.position.y;
   const nextY = previousY + body.velocity.y * dt;
@@ -168,6 +280,12 @@ function moveVertically(body: PhysicsBody, yaw: number, dt: number): void {
       if (!box.solid || !footprintOverlapsTop(body, yaw, box)) continue;
       const top = box.position[1] + box.size[1] / 2;
       if (previousY + PLATFORM_EPSILON < top || nextY > top + PLATFORM_EPSILON) continue;
+      landingY = Math.max(landingY, top);
+    }
+    for (const surface of HULL_SURFACES) {
+      if (!footprintOverlapsHullAt(body.position.x, body.position.z, yaw, surface, PLATFORM_EPSILON)) continue;
+      const top = hullSupportTop(surface, body.position.x, body.position.z, yaw);
+      if (top === undefined || previousY + PLATFORM_EPSILON < top || nextY > top + PLATFORM_EPSILON) continue;
       landingY = Math.max(landingY, top);
     }
     if (landingY > -Infinity) {
@@ -187,6 +305,11 @@ function isGrounded(body: PhysicsBody, yaw: number): boolean {
     if (!box.solid || !footprintOverlapsTop(body, yaw, box)) continue;
     const top = box.position[1] + box.size[1] / 2;
     if (Math.abs(body.position.y - top) <= PLATFORM_EPSILON) return true;
+  }
+  for (const surface of HULL_SURFACES) {
+    if (!footprintOverlapsHullAt(body.position.x, body.position.z, yaw, surface, PLATFORM_EPSILON)) continue;
+    const top = hullSupportTop(surface, body.position.x, body.position.z, yaw);
+    if (top !== undefined && Math.abs(body.position.y - top) <= PLATFORM_EPSILON) return true;
   }
   return false;
 }
@@ -214,6 +337,44 @@ function footprintOverlapsTopAt(
     && z - extentZ < maxZ - minimumOverlap;
 }
 
+function footprintOverlapsHullAt(
+  x: number,
+  z: number,
+  yaw: number,
+  surface: HullSurface,
+  minimumOverlap: number
+): boolean {
+  if (surface.points.length < 3) return false;
+  for (let index = 0; index < surface.points.length; index += 1) {
+    const start = surface.points[index]!;
+    const end = surface.points[(index + 1) % surface.points.length]!;
+    const edge = normalizedHullEdge(start, end);
+    if (!edge) continue;
+    const expansion = Math.max(0, playerContactDistance(yaw, edge.normalX, edge.normalZ) - minimumOverlap);
+    if ((x - start[0]) * edge.normalX + (z - start[1]) * edge.normalZ > expansion) return false;
+  }
+  return true;
+}
+
+function hullSupportTop(surface: HullSurface, x: number, z: number, yaw: number): number | undefined {
+  if (!surface.hull.triangles?.length) return surface.maxY;
+  const extentX = playerContactDistance(yaw, 1, 0);
+  const extentZ = playerContactDistance(yaw, 0, 1);
+  const samples = [
+    [x, z],
+    [x - extentX * 0.8, z], [x + extentX * 0.8, z],
+    [x, z - extentZ * 0.8], [x, z + extentZ * 0.8],
+    [x - extentX * 0.55, z - extentZ * 0.55], [x + extentX * 0.55, z - extentZ * 0.55],
+    [x - extentX * 0.55, z + extentZ * 0.55], [x + extentX * 0.55, z + extentZ * 0.55]
+  ] as const;
+  let highest = -Infinity;
+  for (const sample of samples) {
+    const height = worldHullHeightAt(surface.hull, sample[0], sample[1]);
+    if (height !== undefined) highest = Math.max(highest, height);
+  }
+  return highest > -Infinity ? highest : undefined;
+}
+
 function canOccupyMantleTarget(surfaceId: string, x: number, z: number, feetY: number, yaw: number): boolean {
   for (const box of WORLD_BOXES) {
     if (!box.solid || box.id === surfaceId) continue;
@@ -222,6 +383,12 @@ function canOccupyMantleTarget(surfaceId: string, x: number, z: number, feetY: n
     const verticallyBlocked = feetY < top - PLATFORM_EPSILON
       && feetY + CLING_BODY_HEIGHT > bottom + PLATFORM_EPSILON;
     if (verticallyBlocked && footprintOverlapsTopAt(x, z, yaw, box, PLATFORM_EPSILON)) return false;
+  }
+  for (const surface of HULL_SURFACES) {
+    if (surface.hull.id === surfaceId) continue;
+    const verticallyBlocked = feetY < surface.maxY - PLATFORM_EPSILON
+      && feetY + CLING_BODY_HEIGHT > surface.minY + PLATFORM_EPSILON;
+    if (verticallyBlocked && footprintOverlapsHullAt(x, z, yaw, surface, PLATFORM_EPSILON)) return false;
   }
   return true;
 }
@@ -262,6 +429,28 @@ function moveAxis(body: PhysicsBody, axis: "x" | "z", amount: number, yaw: numbe
       if (crossedFace) collision ??= { surfaceId: box.id, normalX: 0, normalZ: hitMin ? -1 : 1 };
     }
   }
+  for (const surface of HULL_SURFACES) {
+    if (body.position.y > surface.maxY - 0.1 || body.position.y + CLING_BODY_HEIGHT < surface.minY + 0.1) continue;
+    const fromX = axis === "x" ? previous : body.position.x;
+    const fromZ = axis === "z" ? previous : body.position.z;
+    const hit = sweepExpandedHull(fromX, fromZ, body.position.x, body.position.z, yaw, surface);
+    if (!hit) continue;
+    const hitX = fromX + (body.position.x - fromX) * hit.time;
+    const hitZ = fromZ + (body.position.z - fromZ) * hit.time;
+    if (surface.hull.triangles?.length) {
+      const contactDistance = playerContactDistance(yaw, hit.normalX, hit.normalZ);
+      const contactTop = worldHullHeightAt(
+        surface.hull,
+        hitX - hit.normalX * contactDistance,
+        hitZ - hit.normalZ * contactDistance
+      );
+      if (contactTop !== undefined && body.position.y > contactTop - 0.1) continue;
+    }
+    body.position.x = hitX;
+    body.position.z = hitZ;
+    body.velocity[axis] = 0;
+    collision ??= { surfaceId: surface.hull.id, normalX: hit.normalX, normalZ: hit.normalZ };
+  }
   return collision;
 }
 
@@ -289,6 +478,107 @@ function depenetrateBody(body: PhysicsBody, yaw: number): void {
     body.position[nearest.axis] = nearest.value;
     body.velocity[nearest.axis] = 0;
   }
+  for (const surface of HULL_SURFACES) depenetrateFromHull(body, yaw, surface);
+}
+
+function sweepExpandedHull(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  yaw: number,
+  surface: HullSurface
+): { time: number; normalX: number; normalZ: number } | undefined {
+  const deltaX = toX - fromX;
+  const deltaZ = toZ - fromZ;
+  if (Math.hypot(deltaX, deltaZ) <= Number.EPSILON || surface.points.length < 3) return undefined;
+  let enter = 0;
+  let exit = 1;
+  let enterNormalX = 0;
+  let enterNormalZ = 0;
+  for (let index = 0; index < surface.points.length; index += 1) {
+    const start = surface.points[index]!;
+    const end = surface.points[(index + 1) % surface.points.length]!;
+    const edge = normalizedHullEdge(start, end);
+    if (!edge) continue;
+    const limit = start[0] * edge.normalX + start[1] * edge.normalZ
+      + playerContactDistance(yaw, edge.normalX, edge.normalZ);
+    const distance = fromX * edge.normalX + fromZ * edge.normalZ - limit;
+    const rate = deltaX * edge.normalX + deltaZ * edge.normalZ;
+    if (Math.abs(rate) <= 1e-9) {
+      if (distance > 0) return undefined;
+      continue;
+    }
+    const crossing = -distance / rate;
+    if (rate < 0 && crossing > enter) {
+      enter = crossing;
+      enterNormalX = edge.normalX;
+      enterNormalZ = edge.normalZ;
+    } else if (rate > 0) {
+      exit = Math.min(exit, crossing);
+    }
+    if (enter > exit) return undefined;
+  }
+  if (enter < -1e-7 || enter > 1 + 1e-7 || enter > exit || (enterNormalX === 0 && enterNormalZ === 0)) return undefined;
+  return { time: clamp(enter, 0, 1), normalX: enterNormalX, normalZ: enterNormalZ };
+}
+
+/** Exposed for focused tests and tooling that preview authoritative hull contact. */
+export function sweepWorldHull(
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+  yaw: number,
+  hull: WorldHull
+): { time: number; normalX: number; normalZ: number } | undefined {
+  const footprint = worldHullFootprint(hull);
+  return sweepExpandedHull(fromX, fromZ, toX, toZ, yaw, { hull, ...footprint });
+}
+
+function depenetrateFromHull(body: PhysicsBody, yaw: number, surface: HullSurface): void {
+  if (body.position.y > surface.maxY - 0.1 || body.position.y + CLING_BODY_HEIGHT < surface.minY + 0.1) return;
+  let nearestDistance = -Infinity;
+  let nearestNormalX = 0;
+  let nearestNormalZ = 0;
+  for (let index = 0; index < surface.points.length; index += 1) {
+    const start = surface.points[index]!;
+    const end = surface.points[(index + 1) % surface.points.length]!;
+    const edge = normalizedHullEdge(start, end);
+    if (!edge) continue;
+    const limit = start[0] * edge.normalX + start[1] * edge.normalZ
+      + playerContactDistance(yaw, edge.normalX, edge.normalZ);
+    const distance = body.position.x * edge.normalX + body.position.z * edge.normalZ - limit;
+    if (distance > 0) return;
+    if (distance <= nearestDistance) continue;
+    nearestDistance = distance;
+    nearestNormalX = edge.normalX;
+    nearestNormalZ = edge.normalZ;
+  }
+  if (nearestNormalX === 0 && nearestNormalZ === 0) return;
+  body.position.x -= nearestDistance * nearestNormalX;
+  body.position.z -= nearestDistance * nearestNormalZ;
+  const inwardVelocity = body.velocity.x * nearestNormalX + body.velocity.z * nearestNormalZ;
+  if (inwardVelocity < 0) {
+    body.velocity.x -= inwardVelocity * nearestNormalX;
+    body.velocity.z -= inwardVelocity * nearestNormalZ;
+  }
+}
+
+function normalizedHullEdge(
+  start: readonly [number, number],
+  end: readonly [number, number]
+): { normalX: number; normalZ: number; tangentX: number; tangentZ: number } | undefined {
+  const tangentX = end[0] - start[0];
+  const tangentZ = end[1] - start[1];
+  const length = Math.hypot(tangentX, tangentZ);
+  if (length <= Number.EPSILON) return undefined;
+  return {
+    tangentX: tangentX / length,
+    tangentZ: tangentZ / length,
+    normalX: tangentZ / length,
+    normalZ: -tangentX / length
+  };
 }
 
 /** Project the oriented elliptical standing footprint onto a horizontal surface normal. */

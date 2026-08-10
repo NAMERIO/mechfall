@@ -192,10 +192,23 @@ body.mapmaker-page .mapmaker-panel button:hover {
   transform: translateY(-1px);
 }
 
+body.mapmaker-page .mapmaker-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+  transform: none;
+}
+
+body.mapmaker-page .mapmaker-import button.active {
+  border-color: var(--teal);
+  background: rgba(87, 185, 169, 0.22);
+  color: #b9fff3;
+}
+
 body.mapmaker-page .mapmaker-fields input,
 body.mapmaker-page .mapmaker-fields select,
 body.mapmaker-page .mapmaker-world input,
 body.mapmaker-page .mapmaker-import input,
+body.mapmaker-page .mapmaker-import select,
 body.mapmaker-page .mapmaker-panel textarea {
   width: 100%;
   margin-top: 6px;
@@ -231,6 +244,11 @@ body.mapmaker-page .mapmaker-import input[type="file"] {
   font-size: 11px;
 }
 
+body.mapmaker-page .mapmaker-import select {
+  height: 36px;
+  padding: 0 8px;
+}
+
 body.mapmaker-page .mapmaker-panel textarea {
   min-height: 92px;
   padding: 10px;
@@ -263,6 +281,39 @@ body.mapmaker-page .mapmaker-box-list button {
   align-items: flex-start;
   justify-content: center;
   text-align: left;
+}
+
+body.mapmaker-page .mapmaker-box-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 6px;
+}
+
+body.mapmaker-page .mapmaker-box-row > button:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+body.mapmaker-page .mapmaker-box-row .mapmaker-box-remove {
+  min-height: 50px;
+  padding: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--red);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+body.mapmaker-page .mapmaker-box-list .mapmaker-asset-item {
+  border-color: rgba(87, 185, 169, 0.55);
+  background: rgba(87, 185, 169, 0.08);
+}
+
+body.mapmaker-page .mapmaker-box-list .mapmaker-hull-item {
+  border-color: rgba(87, 185, 169, 0.72);
+  background: linear-gradient(90deg, rgba(87, 185, 169, 0.16), rgba(87, 185, 169, 0.04));
 }
 
 body.mapmaker-page .mapmaker-box-list button.active {

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GAME } from "@mechfall/shared";
+import { GAME, worldHullHeightAt } from "@mechfall/shared";
 import {
   moveBody,
   moveClingingBody,
   playerContactDistance,
+  sweepWorldHull,
   wantsToDetachFromSurface
 } from "../../src/game/physics.ts";
 
@@ -38,6 +39,39 @@ test("the standing footprint projects width and depth from yaw", () => {
     playerContactDistance(Math.PI / 4, 1, 0),
     Math.hypot(GAME.playerHalfWidth, GAME.playerHalfDepth) / Math.sqrt(2)
   );
+});
+
+test("smooth convex hulls report authoritative angled contact", () => {
+  const hull = {
+    id: "diamond-hull",
+    vertices: [
+      [-1, 0, 0], [0, 0, -1], [1, 0, 0], [0, 0, 1],
+      [-1, 2, 0], [0, 2, -1], [1, 2, 0], [0, 2, 1]
+    ],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+  const hit = sweepWorldHull(-3, 0, 0, 0, 0, hull);
+  assert.ok(hit);
+  approximatelyEqual(Math.hypot(hit.normalX, hit.normalZ), 1);
+  assert.ok(hit.normalX < -0.7);
+  assert.ok(Math.abs(hit.normalZ) > 0.7);
+  assert.ok(hit.time > 0 && hit.time < 1);
+});
+
+test("triangle collision meshes preserve their local surface height", () => {
+  const mesh = {
+    id: "sloped-car-shape",
+    vertices: [[-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1], [-1, 1, -1], [1, 2, -1], [1, 2, 1], [-1, 1, 1]],
+    triangles: [[4, 5, 6], [4, 6, 7]],
+    color: "#57b9a9",
+    kind: "hull" as const,
+    solid: true
+  } as const;
+  approximatelyEqual(worldHullHeightAt(mesh, -0.75, 0)!, 1.125);
+  approximatelyEqual(worldHullHeightAt(mesh, 0.75, 0)!, 1.875);
+  assert.equal(worldHullHeightAt(mesh, 2, 0), undefined);
 });
 
 test("back and side collision distances are authoritative on every crate face", () => {

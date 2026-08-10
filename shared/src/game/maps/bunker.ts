@@ -39,7 +39,8 @@ export const GENERATED_WORLD_MODELS: readonly WorldModel[] = [
       BUNKER_MODEL_SCALE,
       BUNKER_MODEL_SCALE,
       BUNKER_MODEL_SCALE
-    ]
+    ],
+    "collisionUrl": "/models/maps/bunker.compound-colliders.glb"
   }
 ];
 
@@ -40428,5 +40429,5 @@ function buildBunkerCollisionSections(): WorldHull[] {
   return sections;
 }
 
-/** Local sections preserve the bunker's concave rooms instead of filling its footprint. */
-export const GENERATED_WORLD_HULLS: readonly WorldHull[] = buildBunkerCollisionSections();
+/** Runtime collision comes from the generated Rapier compound manifest. */
+export const GENERATED_WORLD_HULLS: readonly WorldHull[] = [];

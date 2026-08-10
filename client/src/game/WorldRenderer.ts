@@ -93,6 +93,9 @@ export class WorldRenderer {
     opacity: 0.95,
     depthTest: false
   });
+  private readonly collisionDebugModelCenters = new Map<string, THREE.Vector3>();
+  private readonly collisionDebugModelsLoading = new Set<string>();
+  private readonly collisionDebugModelsLoaded = new Set<string>();
   private readonly raycaster = new THREE.Raycaster();
   private readonly pendingPaint = new Map<string, PaintStroke[]>();
   private readonly beforeRenderTasks = new Set<() => void>();
@@ -142,6 +145,12 @@ export class WorldRenderer {
 
   toggleCollisionDebug(): boolean {
     this.collisionDebugRoot.visible = !this.collisionDebugRoot.visible;
+    if (this.collisionDebugRoot.visible) {
+      for (const worldModel of WORLD_MODELS) {
+        const center = this.collisionDebugModelCenters.get(worldModel.id);
+        if (center) void this.loadModelCollisionDebug(worldModel, center);
+      }
+    }
     return this.collisionDebugRoot.visible;
   }
 
@@ -668,7 +677,9 @@ export class WorldRenderer {
         geometry.setIndex(hull.triangles.flat());
         geometry.computeVertexNormals();
       }
-      if (hull.solid) this.addCollisionDebugShape(geometry);
+      const hasGeneratedDebugCollision = hull.modelId !== undefined
+        && WORLD_MODELS.some((model) => model.id === hull.modelId && model.collisionUrl);
+      if (hull.solid && !hasGeneratedDebugCollision) this.addCollisionDebugShape(geometry);
       if (hull.visible === false) continue;
       const material = new THREE.MeshStandardMaterial({ color: hull.color, roughness: 0.7 });
       const mesh = new THREE.Mesh(geometry, material);
@@ -706,7 +717,8 @@ export class WorldRenderer {
       root.updateMatrixWorld(true);
       const bounds = new THREE.Box3().setFromObject(root);
       if (bounds.isEmpty()) throw new Error("The map model contains no visible geometry.");
-      visual.position.sub(bounds.getCenter(new THREE.Vector3()));
+      const visualCenter = bounds.getCenter(new THREE.Vector3());
+      visual.position.sub(visualCenter);
         root.position.set(...worldModel.position);
         root.rotation.set(...worldModel.rotation);
         root.scale.set(...worldModel.scale);
@@ -728,11 +740,48 @@ export class WorldRenderer {
           child.userData.sampleColor = `#${material.color.getHexString()}`;
         }
         this.sampleSurfaces.push(child);
-      });
+        });
         this.scene.add(root);
+        this.collisionDebugModelCenters.set(worldModel.id, visualCenter);
+        if (this.collisionDebugRoot.visible) void this.loadModelCollisionDebug(worldModel, visualCenter);
       } catch (error) {
         console.warn(`The active map model ${worldModel.id} failed to load.`, error);
       }
+    }
+  }
+
+  private async loadModelCollisionDebug(worldModel: (typeof WORLD_MODELS)[number], visualCenter: THREE.Vector3): Promise<void> {
+    if (!worldModel.collisionUrl
+        || this.collisionDebugModelsLoading.has(worldModel.id)
+        || this.collisionDebugModelsLoaded.has(worldModel.id)) return;
+    this.collisionDebugModelsLoading.add(worldModel.id);
+    try {
+      const gltf = await new GLTFLoader().loadAsync(worldModel.collisionUrl);
+      const root = new THREE.Group();
+      const collision = gltf.scene;
+      collision.position.sub(visualCenter);
+      root.add(collision);
+      root.position.set(...worldModel.position);
+      root.rotation.set(...worldModel.rotation);
+      root.scale.set(...worldModel.scale);
+      root.updateMatrixWorld(true);
+      root.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)) return;
+        child.material = this.collisionDebugFillMaterial;
+        child.renderOrder = 100;
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(child.geometry, 12),
+          this.collisionDebugLineMaterial
+        );
+        edges.renderOrder = 101;
+        child.add(edges);
+      });
+      this.collisionDebugRoot.add(root);
+      this.collisionDebugModelsLoaded.add(worldModel.id);
+    } catch (error) {
+      console.warn(`The collision debug model for ${worldModel.id} failed to load.`, error);
+    } finally {
+      this.collisionDebugModelsLoading.delete(worldModel.id);
     }
   }
 

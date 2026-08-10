@@ -39,6 +39,8 @@ export interface WorldModel {
   position: readonly [number, number, number];
   rotation: readonly [number, number, number];
   scale: readonly [number, number, number];
+  /** Optional lightweight collision-only GLB used by the in-game F7 debugger. */
+  collisionUrl?: string;
 }
 
 export interface HullFootprint {

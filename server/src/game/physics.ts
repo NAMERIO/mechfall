@@ -11,6 +11,12 @@ import {
   type Vec3,
   type WorldHull
 } from "@mechfall/shared";
+import {
+  hasCompoundWorldCollision,
+  isCompoundCollisionSurface,
+  moveBodyWithRapier,
+  moveClingingBodyWithRapier
+} from "./rapierCollision.js";
 
 export interface PhysicsBody {
   position: Vec3;
@@ -103,6 +109,9 @@ export function moveBody(
   yaw: number,
   dt: number
 ): SurfaceClingState | undefined {
+  if (hasCompoundWorldCollision) {
+    return moveBodyWithRapier(body, wishX, wishZ, speed, jump, yaw, dt);
+  }
   const length = Math.hypot(wishX, wishZ);
   const normalizedX = length > 1 ? wishX / length : wishX;
   const normalizedZ = length > 1 ? wishZ / length : wishZ;
@@ -191,6 +200,9 @@ export function moveClingingBody(
   vertical: number,
   dt: number
 ): ClingMoveResult {
+  if (hasCompoundWorldCollision && isCompoundCollisionSurface(cling.surfaceId)) {
+    return moveClingingBodyWithRapier(body, cling, sideways, vertical, dt);
+  }
   const box = WORLD_BOXES.find((candidate) => candidate.solid && candidate.id === cling.surfaceId);
   if (!box) {
     const surface = HULL_SURFACES.find((candidate) => candidate.hull.id === cling.surfaceId);

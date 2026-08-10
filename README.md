@@ -61,6 +61,10 @@ pnpm test
 pnpm build
 ```
 
+### Blender compound collision tool
+
+For detailed house/interior GLBs, use the [automatic Blender compound-collider generator](tools/blender/README.md). It creates lightweight box, cylinder, and convex colliders while skipping small decoration and leaving doors open by default.
+
 ## Production
 
 Build the client and server:

@@ -11,6 +11,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.20.0",
     "@mechfall/shared": "workspace:*",
     "express": "^5.1.0",
     "ws": "^8.18.3"

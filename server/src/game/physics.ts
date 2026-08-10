@@ -130,6 +130,7 @@ export function moveBody(
     body.position.x,
     body.position.z + body.velocity.z * dt + Math.sign(body.velocity.z) * WALKABLE_SURFACE_PROBE
   );
+  if (followWalkableSurfaces) followWalkableHullSurfaces(body, yaw);
   // Sequential X/Z movement can cross two faces at a sharp convex corner in
   // one tick. Resolve both planes immediately instead of leaving the body
   // slightly inside until the next tick, where it could be pushed through.
@@ -414,9 +415,18 @@ function isGrounded(body: PhysicsBody, yaw: number): boolean {
     if (Math.abs(body.position.y - top) <= PLATFORM_EPSILON) return true;
   }
   for (const surface of HULL_SURFACES) {
-    if (!footprintOverlapsHullAt(body.position.x, body.position.z, yaw, surface, PLATFORM_EPSILON)) continue;
-    const top = hullSupportTop(surface, body.position.x, body.position.z, yaw);
-    if (top !== undefined && Math.abs(body.position.y - top) <= PLATFORM_EPSILON) return true;
+    // Exact edge contact still counts as grounded. Requiring even a tiny
+    // overlap makes detailed diagonal meshes alternate grounded/airborne as
+    // their sampled outline changes from one triangle to the next.
+    if (!footprintOverlapsHullAt(body.position.x, body.position.z, yaw, surface, 0)) continue;
+    const support = surface.hull.triangles?.length
+      ? walkableHullSupport(surface, body.position.x, body.position.z, yaw)
+      : undefined;
+    const top = support?.height ?? hullSupportTop(surface, body.position.x, body.position.z, yaw);
+    if (top === undefined) continue;
+    if (support
+      ? isWalkableGroundContact(body.position.y, top)
+      : Math.abs(body.position.y - top) <= PLATFORM_EPSILON) return true;
   }
   return false;
 }
@@ -579,18 +589,28 @@ export function walkableWorldHullSupportHeightAt(
   return walkableHullSupport(surface, x, z, yaw)?.height;
 }
 
-function followWalkableHullSurfaces(body: PhysicsBody, yaw: number): void {
+function followWalkableHullSurfaces(body: PhysicsBody, yaw: number, allowDescending = true): void {
   let targetHeight = -Infinity;
   for (const surface of HULL_SURFACES) {
     const support = walkableHullSupport(surface, body.position.x, body.position.z, yaw);
     if (!support) continue;
-    const rise = support.height - body.position.y;
-    if (rise > MAX_WALK_STEP_HEIGHT || rise < -MAX_WALK_GROUND_SNAP) continue;
+    if (!canFollowWalkableHeight(body.position.y, support.height, allowDescending)) continue;
     targetHeight = Math.max(targetHeight, support.height);
   }
   if (targetHeight === -Infinity) return;
   body.position.y = Math.max(0, targetHeight);
   body.velocity.y = 0;
+}
+
+/** Shared by movement and regression tests for detailed diagonal contact. */
+export function canFollowWalkableHeight(feetY: number, supportY: number, allowDescending = true): boolean {
+  const rise = supportY - feetY;
+  if (rise > MAX_WALK_STEP_HEIGHT || rise < -MAX_WALK_GROUND_SNAP) return false;
+  return allowDescending || rise >= -SURFACE_HEIGHT_EPSILON;
+}
+
+export function isWalkableGroundContact(feetY: number, supportY: number): boolean {
+  return Math.abs(feetY - supportY) <= WALKABLE_GROUND_CONTACT_TOLERANCE;
 }
 
 function canReachWalkableHullAt(
@@ -682,7 +702,10 @@ function moveAxis(
     }
   }
 
-  if (allowWalkableFollow) followWalkableHullSurfaces(body, yaw);
+  // The first axis is only an intermediate point in diagonal movement. It may
+  // raise onto a slope, but must not snap downward into a triangle gap before
+  // the second axis reaches the real destination.
+  if (allowWalkableFollow) followWalkableHullSurfaces(body, yaw, false);
 
   for (const surface of HULL_SURFACES) {
     if (body.position.y > surface.maxY - 0.1 || body.position.y + CLING_BODY_HEIGHT < surface.minY + 0.1) continue;
@@ -943,6 +966,7 @@ const WALKABLE_SURFACE_PROBE = 0.22;
 const SURFACE_HEIGHT_EPSILON = 0.035;
 const SURFACE_CLEARANCE = 0.02;
 const WALKABLE_SUPPORT_CONTACT_EPSILON = 0.12;
+const WALKABLE_GROUND_CONTACT_TOLERANCE = 0.28;
 const HULL_DEPENETRATION_PASSES = 4;
 const HULL_DEPENETRATION_EPSILON = 1e-7;
 const ARENA_WALL_TOP = Math.max(

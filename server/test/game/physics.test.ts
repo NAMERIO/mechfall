@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { GAME, worldHullHeightAt } from "@mechfall/shared";
 import {
+  canFollowWalkableHeight,
+  isWalkableGroundContact,
   moveBody,
   moveClingingBody,
   playerContactDistance,
@@ -120,6 +122,12 @@ test("vehicle hoods and ramps are walkable while steep model faces stay walls", 
 
   approximatelyEqual(walkableWorldHullHeightAt(hood, 0, 0)!, 0.7);
   assert.equal(walkableWorldHullHeightAt(windshield, 0, 0), undefined);
+});
+
+test("detailed diagonal support survives small height changes without intermediate downward snaps", () => {
+  assert.equal(isWalkableGroundContact(1.2, 1.4), true);
+  assert.equal(canFollowWalkableHeight(1.4, 1.2, false), false);
+  assert.equal(canFollowWalkableHeight(1.4, 1.2, true), true);
 });
 
 test("a higher steep car triangle cannot hide behind lower hood support", () => {

@@ -41,6 +41,9 @@ interface Avatar {
   leftLeg?: THREE.Mesh;
   rightLeg?: THREE.Mesh;
   visual?: THREE.Object3D;
+  bodyPitch?: number;
+  bodyPitchApplied?: number;
+  bodyPitchBones?: Array<{ bone: THREE.Object3D; weight: number }>;
   mixer?: THREE.AnimationMixer;
   actions?: Map<string, THREE.AnimationAction>;
   activeAction?: THREE.AnimationAction;
@@ -785,7 +788,10 @@ export class WorldRenderer {
     const material = createPaintLayerMaterial(state.color, texture);
     const paintSurfaces = new Map<PaintPart, PaintSurface>();
     let characterMesh: THREE.Mesh | undefined;
+    const bodyPitchBones: Array<{ bone: THREE.Object3D; weight: number }> = [];
     visual.traverse((child) => {
+      const pitchWeight = BODY_PITCH_BONES.get(child.name);
+      if (pitchWeight !== undefined) bodyPitchBones.push({ bone: child, weight: pitchWeight });
       if (!(child instanceof THREE.Mesh)) return;
       child.material = material;
       child.castShadow = true;
@@ -839,6 +845,9 @@ export class WorldRenderer {
       strokes: this.pendingPaint.get(state.id) ?? [],
       procedural: false,
       visual,
+      bodyPitch: 0,
+      bodyPitchApplied: 0,
+      bodyPitchBones,
       mixer,
       actions,
       hunterMark,
@@ -940,6 +949,8 @@ export class WorldRenderer {
       rightArm,
       leftLeg,
       rightLeg,
+      bodyPitch: 0,
+      bodyPitchApplied: 0,
       hunterMark,
       weapon,
       muzzle,
@@ -1055,6 +1066,29 @@ export class WorldRenderer {
     avatar.hunterMark.position.y = compact ? -0.4 : curled ? -1.1 : 0;
   }
 
+  private applyAvatarBodyPitch(avatar: Avatar): void {
+    const pitch = avatar.bodyPitch ?? 0;
+    if (!avatar.procedural) {
+      if (avatar.visual) avatar.visual.rotation.x = 0;
+      for (const entry of avatar.bodyPitchBones ?? []) entry.bone.rotation.x += pitch * entry.weight;
+      avatar.bodyPitchApplied = pitch;
+      return;
+    }
+    if (!avatar.body || !avatar.head) return;
+    avatar.body.rotation.x = pitch * 0.62;
+    avatar.head.rotation.x = pitch * 0.38;
+    avatar.bodyPitchApplied = pitch;
+  }
+
+  private clearAvatarBodyPitch(avatar: Avatar): void {
+    const applied = avatar.bodyPitchApplied ?? 0;
+    if (applied === 0) return;
+    if (!avatar.procedural) {
+      for (const entry of avatar.bodyPitchBones ?? []) entry.bone.rotation.x -= applied * entry.weight;
+    }
+    avatar.bodyPitchApplied = 0;
+  }
+
   private animate = (): void => {
     if (!this.running) return;
     requestAnimationFrame(this.animate);
@@ -1077,10 +1111,15 @@ export class WorldRenderer {
       const desiredYaw = id === this.selfId && this.input ? this.input.yaw : avatar.targetYaw;
       const yawResponse = id === this.selfId ? 1 : 1 - Math.exp(-18 * dt);
       avatar.root.rotation.y += shortestAngle(avatar.root.rotation.y, desiredYaw) * yawResponse;
+      this.clearAvatarBodyPitch(avatar);
       const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
       const attachedMoving = isAttachedMovement(avatar.state);
       const displayPose = attachedMoving ? "stand" : avatar.state.pose;
       const moving = avatar.state.cling === undefined && planarSpeed > 0.3;
+      const canBodyPitch = id === this.selfId && avatar.state.cling === undefined && displayPose === "stand";
+      const aimPitch = this.input ? this.input.aim().pitch : 0;
+      const targetBodyPitch = canBodyPitch ? THREE.MathUtils.clamp(aimPitch * BODY_PITCH_STRENGTH, -MAX_BODY_PITCH_UP, MAX_BODY_PITCH_DOWN) : 0;
+      avatar.bodyPitch = THREE.MathUtils.lerp(avatar.bodyPitch ?? 0, targetBodyPitch, 1 - Math.exp(-BODY_PITCH_RESPONSE * dt));
       const stride = moving ? Math.sin(elapsed * 12) * 0.48 : 0;
       if (avatar.procedural && displayPose === "stand" && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
         avatar.leftLeg.rotation.x = stride;
@@ -1110,6 +1149,7 @@ export class WorldRenderer {
         this.setAvatarAnimation(avatar, clipName, displayPose === "stand" && moving, timeScale);
         avatar.mixer?.update(dt);
       }
+      this.applyAvatarBodyPitch(avatar);
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
       const recoilRemaining = Math.max(0, avatar.recoilUntil - renderTime);
       avatar.weapon.position.copy(avatar.weaponBasePosition);
@@ -1477,6 +1517,16 @@ function isAttachedMovement(state: PlayerState): boolean {
 
 const PAINT_TEXTURE_SIZE = 1024;
 const CHARACTER_HEIGHT = 2.45;
+const MAX_BODY_PITCH_UP = Math.PI / 2;
+const MAX_BODY_PITCH_DOWN = 1.85;
+const BODY_PITCH_STRENGTH = 3.3;
+const BODY_PITCH_RESPONSE = 16;
+const BODY_PITCH_BONES = new Map<string, number>([
+  ["Bone001", 0.42],
+  ["Bone002", 0.28],
+  ["Bone003", 0.2],
+  ["Bone004", 0.1]
+]);
 const WALK_CLIP = "ChameleonMan|Walking";
 const RUN_CLIP = "ChameleonMan|Running";
 const HUNTER_IDLE_CLIP = "ChameleonMan|Pose_HandOnHip";

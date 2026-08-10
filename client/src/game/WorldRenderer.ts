@@ -5,6 +5,7 @@ import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
   GAME,
   WORLD_FLOOR_COLOR,
+  WORLD_FLOOR_VISIBLE,
   WORLD_BOXES,
   WORLD_HULLS,
   WORLD_MODELS,
@@ -622,24 +623,26 @@ export class WorldRenderer {
   }
 
   private buildWorld(): void {
-    const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
-      new THREE.MeshStandardMaterial({ color: WORLD_FLOOR_COLOR, roughness: 0.92, metalness: 0 })
-    );
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-    floor.userData.sampleColor = WORLD_FLOOR_COLOR;
-    this.sampleSurfaces.push(floor);
-    this.scene.add(floor);
+    if (WORLD_FLOOR_VISIBLE) {
+      const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
+        new THREE.MeshStandardMaterial({ color: WORLD_FLOOR_COLOR, roughness: 0.92, metalness: 0 })
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.receiveShadow = true;
+      floor.userData.sampleColor = WORLD_FLOOR_COLOR;
+      this.sampleSurfaces.push(floor);
+      this.scene.add(floor);
 
-    const grid = new THREE.GridHelper(WORLD_SIZE, Math.max(8, Math.round(WORLD_SIZE)), "#8f846f", "#a99d83");
-    grid.position.y = 0.008;
-    const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
-    for (const material of materials) {
-      material.opacity = 0.22;
-      material.transparent = true;
+      const grid = new THREE.GridHelper(WORLD_SIZE, Math.max(8, Math.round(WORLD_SIZE)), "#8f846f", "#a99d83");
+      grid.position.y = 0.008;
+      const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
+      for (const material of materials) {
+        material.opacity = 0.22;
+        material.transparent = true;
+      }
+      this.scene.add(grid);
     }
-    this.scene.add(grid);
 
     for (const box of WORLD_BOXES) {
       const geometry = new THREE.BoxGeometry(...box.size);
@@ -707,11 +710,19 @@ export class WorldRenderer {
         root.position.set(...worldModel.position);
         root.rotation.set(...worldModel.rotation);
         root.scale.set(...worldModel.scale);
-      root.updateMatrixWorld(true);
-      root.traverse((child) => {
-        if (!(child instanceof THREE.Mesh)) return;
-        child.castShadow = true;
-        child.receiveShadow = true;
+        root.updateMatrixWorld(true);
+        let meshCount = 0;
+        root.traverse((child) => {
+          if (child instanceof THREE.Mesh) meshCount += 1;
+        });
+        // Complete environment GLBs can contain hundreds of separately named
+        // meshes. Rendering all of them into the shadow map doubles their draw
+        // work, so large static scenes receive lighting without casting shadows.
+        const castModelShadows = meshCount <= 250;
+        root.traverse((child) => {
+          if (!(child instanceof THREE.Mesh)) return;
+          child.castShadow = castModelShadows;
+          child.receiveShadow = true;
         const material = Array.isArray(child.material) ? child.material[0] : child.material;
         if (material && "color" in material && material.color instanceof THREE.Color) {
           child.userData.sampleColor = `#${material.color.getHexString()}`;

@@ -10,6 +10,16 @@
 
 This is a licensed project asset, not an open-source standalone model. Do not redistribute the FBX or GLB separately from the game project.
 
+## Bunker map
+
+`models/maps/bunker-bunker.glb` is **Bunker** by **Ivan Potupin (jereck94)**.
+
+- Source: <https://sketchfab.com/3d-models/bunker-5cdc5b8bbe904dcf87d34f68fe42852c>
+- License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- Runtime changes: scaled and centered as the active game map, aligned so its
+  concrete floor is at physics y=0, and paired with an optimized hidden
+  collision mesh generated from the source geometry.
+
 ## Licensed shotgun asset
 
 `meccha-chameleon-shotgun.glb` is **Meccha Chameleon Shut Gun** by **samkar_09**.

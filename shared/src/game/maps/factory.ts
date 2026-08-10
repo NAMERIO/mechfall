@@ -4,7 +4,13 @@ import type { WorldBox, WorldHull, WorldModel } from "../world.ts";
 export const GENERATED_WORLD_NAME = "Factory";
 export const GENERATED_WORLD_SIZE = 42;
 export const GENERATED_FLOOR_COLOR = "#c8b899";
+export const GENERATED_FLOOR_VISIBLE = true;
 export const GENERATED_BORDER_COLOR = "#de704e";
+export const GENERATED_SPAWN_POINTS: readonly (readonly [number, number, number])[] = [
+  [-17, 0, -17], [17, 0, 17], [-17, 0, 17], [17, 0, -17],
+  [0, 0, -17], [0, 0, 17], [-17, 0, 0], [17, 0, 0],
+  [-8, 0, 8], [8, 0, -8], [-8, 0, -8], [8, 0, 8]
+];
 export const GENERATED_WORLD_MODELS: readonly WorldModel[] = [
   {
     "id": "container-scene",

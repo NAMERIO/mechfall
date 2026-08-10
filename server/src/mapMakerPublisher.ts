@@ -41,6 +41,8 @@ export async function publishMapToGame(workspaceRoot: string, value: unknown): P
   const mapName = requireString(payload.mapName, "map name", 60);
   const worldSize = requireNumber(payload.worldSize, "world size", 8, 120);
   const floorColor = requireColor(payload.floorColor, "floor color");
+  const floorVisible = payload.floorVisible !== false;
+  const spawnPoints = requireSpawnPoints(payload.spawnPoints, worldSize);
   const borderColor = requireColor(payload.borderColor, "border color");
   const boxes = requireBoxes(payload.boxes);
   const hulls = requireHulls(payload.hulls);
@@ -64,7 +66,7 @@ export async function publishMapToGame(workspaceRoot: string, value: unknown): P
     if (hull.modelId && !modelIds.has(hull.modelId)) throw new Error(`Collision mesh ${hull.id} links to a missing model.`);
   }
 
-  const generatedSource = makeGeneratedWorldSource({ mapName, worldSize, floorColor, borderColor, boxes, hulls, worldModels }, "../world.ts");
+  const generatedSource = makeGeneratedWorldSource({ mapName, worldSize, floorColor, floorVisible, spawnPoints, borderColor, boxes, hulls, worldModels }, "../world.ts");
   const mapsDirectory = path.join(workspaceRoot, "shared", "src", "game", "maps");
   await mkdir(mapsDirectory, { recursive: true });
   const mapCodePath = path.join(mapsDirectory, `${slugify(mapName)}.ts`);
@@ -90,6 +92,8 @@ function makeGeneratedWorldSource(input: {
   mapName: string;
   worldSize: number;
   floorColor: string;
+  floorVisible: boolean;
+  spawnPoints: Array<[number, number, number]>;
   borderColor: string;
   boxes: WorldBox[];
   hulls: WorldHull[];
@@ -100,7 +104,9 @@ function makeGeneratedWorldSource(input: {
     + `export const GENERATED_WORLD_NAME = ${JSON.stringify(input.mapName)};\n`
     + `export const GENERATED_WORLD_SIZE = ${input.worldSize};\n`
     + `export const GENERATED_FLOOR_COLOR = ${JSON.stringify(input.floorColor)};\n`
+    + `export const GENERATED_FLOOR_VISIBLE = ${input.floorVisible};\n`
     + `export const GENERATED_BORDER_COLOR = ${JSON.stringify(input.borderColor)};\n`
+    + `export const GENERATED_SPAWN_POINTS: readonly (readonly [number, number, number])[] = ${JSON.stringify(input.spawnPoints)};\n`
     + `export const GENERATED_WORLD_MODELS: readonly WorldModel[] = ${JSON.stringify(input.worldModels, null, 2)};\n\n`
     + `export const GENERATED_WORLD_BOXES: readonly WorldBox[] = ${JSON.stringify(input.boxes, null, 2)};\n\n`
     + `export const GENERATED_WORLD_HULLS: readonly WorldHull[] = ${JSON.stringify(input.hulls, null, 2)};\n`;
@@ -184,6 +190,27 @@ function requireTuple(value: unknown, label: string): [number, number, number] {
 function requirePositiveTuple(value: unknown, label: string): [number, number, number] {
   if (!Array.isArray(value) || value.length !== 3) throw new Error(`Invalid ${label}.`);
   return value.map((item) => requireNumber(item, label, 0.0001, 1_000_000)) as [number, number, number];
+}
+
+function requireSpawnPoints(value: unknown, worldSize: number): Array<[number, number, number]> {
+  if (value === undefined) {
+    const edge = Math.max(2, worldSize / 2 - 4);
+    const middle = Math.max(1.5, Math.min(8, edge / 2));
+    return [
+      [-edge, 0, -edge], [edge, 0, edge], [-edge, 0, edge], [edge, 0, -edge],
+      [0, 0, -edge], [0, 0, edge], [-edge, 0, 0], [edge, 0, 0],
+      [-middle, 0, middle], [middle, 0, -middle], [-middle, 0, -middle], [middle, 0, middle]
+    ];
+  }
+  if (!Array.isArray(value) || value.length !== 12) throw new Error("The map must contain exactly 12 spawn points.");
+  const half = worldSize / 2;
+  return value.map((point, index) => {
+    const tuple = requireTuple(point, `spawn point ${index + 1}`);
+    if (Math.abs(tuple[0]) > half || Math.abs(tuple[2]) > half || tuple[1] < 0 || tuple[1] > 100) {
+      throw new Error(`Spawn point ${index + 1} is outside the map.`);
+    }
+    return tuple;
+  });
 }
 
 function slugify(value: string): string {

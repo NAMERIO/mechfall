@@ -1,6 +1,8 @@
 import {
   GENERATED_BORDER_COLOR,
   GENERATED_FLOOR_COLOR,
+  GENERATED_FLOOR_VISIBLE,
+  GENERATED_SPAWN_POINTS,
   GENERATED_WORLD_BOXES,
   GENERATED_WORLD_HULLS,
   GENERATED_WORLD_MODELS,
@@ -49,6 +51,7 @@ export const WORLD_NAME = GENERATED_WORLD_NAME;
 export const WORLD_SIZE = GENERATED_WORLD_SIZE;
 export const WORLD_WALL_THICKNESS = 1;
 export const WORLD_FLOOR_COLOR = GENERATED_FLOOR_COLOR;
+export const WORLD_FLOOR_VISIBLE = GENERATED_FLOOR_VISIBLE;
 export const WORLD_BORDER_COLOR = GENERATED_BORDER_COLOR;
 export const WORLD_MODELS: readonly WorldModel[] = GENERATED_WORLD_MODELS;
 export const WORLD_BOXES: readonly WorldBox[] = GENERATED_WORLD_BOXES;
@@ -105,10 +108,4 @@ export function convexHull2D(input: readonly (readonly [number, number])[]): [nu
   return [...lower, ...upper];
 }
 
-const spawnEdge = Math.max(2, WORLD_SIZE / 2 - 4);
-const spawnMiddle = Math.max(1.5, Math.min(8, spawnEdge / 2));
-export const SPAWN_POINTS: readonly (readonly [number, number, number])[] = [
-  [-spawnEdge, 0, -spawnEdge], [spawnEdge, 0, spawnEdge], [-spawnEdge, 0, spawnEdge], [spawnEdge, 0, -spawnEdge],
-  [0, 0, -spawnEdge], [0, 0, spawnEdge], [-spawnEdge, 0, 0], [spawnEdge, 0, 0],
-  [-spawnMiddle, 0, spawnMiddle], [spawnMiddle, 0, -spawnMiddle], [-spawnMiddle, 0, -spawnMiddle], [spawnMiddle, 0, spawnMiddle]
-];
+export const SPAWN_POINTS: readonly (readonly [number, number, number])[] = GENERATED_SPAWN_POINTS;

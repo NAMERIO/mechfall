@@ -7,10 +7,12 @@ import {
   WORLD_BORDER_COLOR,
   WORLD_BOXES,
   WORLD_FLOOR_COLOR,
+  WORLD_FLOOR_VISIBLE,
   WORLD_HULLS,
   WORLD_MODELS,
   WORLD_NAME,
   WORLD_SIZE,
+  SPAWN_POINTS,
   convexHull2D,
   worldHullHeightAt,
   type WorldBox,
@@ -308,9 +310,11 @@ let borderColor = DEFAULT_BORDER_COLOR;
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(worldSize, worldSize), new THREE.MeshStandardMaterial({ color: floorColor, roughness: 0.92 }));
 floor.rotation.x = -Math.PI / 2;
 floor.receiveShadow = true;
+floor.visible = WORLD_FLOOR_VISIBLE;
 scene.add(floor);
 
 let grid = makeGrid(worldSize);
+grid.visible = WORLD_FLOOR_VISIBLE;
 scene.add(grid);
 
 let boxes: EditableBox[] = [];
@@ -613,6 +617,7 @@ function applyWorldSettings(): void {
   grid.geometry.dispose();
   (Array.isArray(grid.material) ? grid.material : [grid.material]).forEach((material) => material.dispose());
   grid = makeGrid(worldSize);
+  grid.visible = WORLD_FLOOR_VISIBLE;
   scene.add(grid);
   exportJson();
 }
@@ -1232,7 +1237,12 @@ function loadHulls(inputs: Array<Omit<EditableHull, "mesh" | "edges">>): void {
 
 async function importModel(
   file: File | undefined,
-  options: { id?: string; transform?: { position: readonly [number, number, number]; rotation: readonly [number, number, number]; scale: readonly [number, number, number] }; loadingActive?: boolean } = {}
+  options: {
+    id?: string;
+    transform?: { position: readonly [number, number, number]; rotation: readonly [number, number, number]; scale: readonly [number, number, number] };
+    loadingActive?: boolean;
+    skipCollision?: boolean;
+  } = {}
 ): Promise<ImportedAsset | undefined> {
   if (!file) return;
   const lowerName = file.name.toLowerCase();
@@ -1272,6 +1282,10 @@ async function importModel(
       snapAssetToFloor(candidate);
     }
     selectAsset(candidate);
+    if (options.skipCollision) {
+      status.textContent = `Loaded ${file.name} with its authored map collision.`;
+      return asset;
+    }
     const result = rebuildSmartModelCollision(true);
     if (!result?.created) throw new Error("the model does not contain usable triangle geometry");
     status.textContent = result.optimized
@@ -1301,9 +1315,6 @@ async function loadActiveGameModels(): Promise<void> {
     disposeObject(asset.model);
   }
   importedAssets = [];
-  for (const hull of [...hulls]) {
-    if (hull.generatedFrom === "model") removeEditableHull(hull);
-  }
   selectedAsset = undefined;
   let loaded = 0;
   for (const worldModel of WORLD_MODELS) {
@@ -1316,7 +1327,8 @@ async function loadActiveGameModels(): Promise<void> {
       const asset = await importModel(new File([blob], fileName, { type: blob.type || "model/gltf-binary" }), {
         id: worldModel.id,
         transform: worldModel,
-        loadingActive: true
+        loadingActive: true,
+        skipCollision: true
       });
       if (asset) loaded += 1;
     } catch (error) {
@@ -1348,9 +1360,14 @@ function normalizeImportedModel(model: THREE.Group, name: string): THREE.Group {
   root.scale.setScalar(scale);
   root.userData.defaultUniformScale = scale;
   root.userData.uniformScaleReference = scale;
+  let meshCount = 0;
+  root.traverse((child) => {
+    if (child instanceof THREE.Mesh) meshCount += 1;
+  });
+  const castModelShadows = meshCount <= 250;
   root.traverse((child) => {
     if (child instanceof THREE.Mesh) {
-      child.castShadow = true;
+      child.castShadow = castModelShadows;
       child.receiveShadow = true;
     }
   });
@@ -1608,6 +1625,8 @@ function exportJson(): void {
     mapName: mapNameInput.value.trim() || WORLD_NAME,
     worldSize,
     floorColor,
+    floorVisible: WORLD_FLOOR_VISIBLE,
+    spawnPoints: SPAWN_POINTS,
     borderColor,
     assets: importedAssets.map((asset) => ({ id: asset.id, fileName: asset.file.name, ...assetToExport(asset.model) })),
     boxes: boxes.map(boxToEditableInput),
@@ -1660,6 +1679,8 @@ async function addMapToGame(): Promise<void> {
         mapName,
         worldSize,
         floorColor,
+        floorVisible: WORLD_FLOOR_VISIBLE,
+        spawnPoints: SPAWN_POINTS,
         borderColor,
         boxes: boxes.map(boxToEditableInput),
         hulls: hulls.map(hullToWorldHull),

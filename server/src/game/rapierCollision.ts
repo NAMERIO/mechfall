@@ -12,6 +12,7 @@ interface PhysicsBody {
 type Quaternion = readonly [number, number, number, number];
 interface ManifestCollider {
   id: string;
+  source: string;
   type: "box" | "cylinder" | "convex" | "mesh";
   translation: readonly [number, number, number];
   rotation: Quaternion;
@@ -39,6 +40,7 @@ const MAX_WALK_SLOPE = 58 * Math.PI / 180;
 const MAX_STEP_HEIGHT = 1.25;
 const GROUND_SNAP_DISTANCE = 0.55;
 const CLING_PROBE_DISTANCE = 0.16;
+const OPEN_CENTER_DOOR_WALL_SOURCE = "Wall.020__part_0055";
 const MANTLE_DURATION = 0.48;
 const MANTLE_INWARD_SPEED = GAME.climbSpeed * 0.72;
 const MANTLE_UP_SPEED = GAME.climbSpeed * 0.18;
@@ -299,25 +301,92 @@ function buildCompoundMap(worldModel: NonNullable<typeof model>): void {
   const modelRotation = quaternionFromEuler(worldModel.rotation);
   const center = manifest.visualCenter ?? [0, 0, 0];
   for (const entry of manifest.colliders) {
+    if (entry.source === OPEN_CENTER_DOOR_WALL_SOURCE && entry.halfExtents) {
+      buildWallAroundCenterDoor(entry, worldModel, modelRotation, center);
+      continue;
+    }
     const descriptor = colliderDescriptor(entry, worldModel.scale);
     if (!descriptor) continue;
-    const centered: [number, number, number] = [
-      (entry.translation[0] - center[0]) * worldModel.scale[0],
-      (entry.translation[1] - center[1]) * worldModel.scale[1],
-      (entry.translation[2] - center[2]) * worldModel.scale[2]
-    ];
-    const translated = rotateVector(centered, modelRotation);
-    const rotation = multiplyQuaternions(modelRotation, entry.rotation);
-    descriptor
-      .setTranslation(
-        worldModel.position[0] + translated[0],
-        worldModel.position[1] + translated[1],
-        worldModel.position[2] + translated[2]
-      )
-      .setRotation({ x: rotation[0], y: rotation[1], z: rotation[2], w: rotation[3] });
-    const collider = world.createCollider(descriptor);
-    surfaceIds.set(collider.handle, entry.id);
+    placeManifestCollider(descriptor, entry, worldModel, modelRotation, center, [0, 0, 0], entry.id);
   }
+}
+
+/**
+ * This generated panel spans across both the concrete wall and its visible
+ * double-door opening. Preserve the wall beside and above the doorway while
+ * leaving the lower half of the door section passable.
+ */
+function buildWallAroundCenterDoor(
+  entry: ManifestCollider,
+  worldModel: NonNullable<typeof model>,
+  modelRotation: Quaternion,
+  center: readonly [number, number, number]
+): void {
+  const [halfX, halfY, halfZ] = entry.halfExtents!;
+  const sideHalfZ = halfZ / 2;
+  const lintelHalfY = halfY / 2;
+  const side = RAPIER.ColliderDesc.cuboid(
+    halfX * Math.abs(worldModel.scale[0]),
+    halfY * Math.abs(worldModel.scale[1]),
+    sideHalfZ * Math.abs(worldModel.scale[2])
+  );
+  placeManifestCollider(
+    side,
+    entry,
+    worldModel,
+    modelRotation,
+    center,
+    [0, 0, sideHalfZ],
+    `${entry.id}:side`
+  );
+
+  const lintel = RAPIER.ColliderDesc.cuboid(
+    halfX * Math.abs(worldModel.scale[0]),
+    lintelHalfY * Math.abs(worldModel.scale[1]),
+    sideHalfZ * Math.abs(worldModel.scale[2])
+  );
+  placeManifestCollider(
+    lintel,
+    entry,
+    worldModel,
+    modelRotation,
+    center,
+    [0, lintelHalfY, -sideHalfZ],
+    `${entry.id}:lintel`
+  );
+}
+
+function placeManifestCollider(
+  descriptor: RAPIER.ColliderDesc,
+  entry: ManifestCollider,
+  worldModel: NonNullable<typeof model>,
+  modelRotation: Quaternion,
+  center: readonly [number, number, number],
+  localOffset: readonly [number, number, number],
+  surfaceId: string
+): void {
+  const centered: [number, number, number] = [
+    (entry.translation[0] - center[0]) * worldModel.scale[0],
+    (entry.translation[1] - center[1]) * worldModel.scale[1],
+    (entry.translation[2] - center[2]) * worldModel.scale[2]
+  ];
+  const translated = rotateVector(centered, modelRotation);
+  const rotation = multiplyQuaternions(modelRotation, entry.rotation);
+  const scaledOffset: [number, number, number] = [
+    localOffset[0] * worldModel.scale[0],
+    localOffset[1] * worldModel.scale[1],
+    localOffset[2] * worldModel.scale[2]
+  ];
+  const offset = rotateVector(scaledOffset, rotation);
+  descriptor
+    .setTranslation(
+      worldModel.position[0] + translated[0] + offset[0],
+      worldModel.position[1] + translated[1] + offset[1],
+      worldModel.position[2] + translated[2] + offset[2]
+    )
+    .setRotation({ x: rotation[0], y: rotation[1], z: rotation[2], w: rotation[3] });
+  const collider = world.createCollider(descriptor);
+  surfaceIds.set(collider.handle, surfaceId);
 }
 
 function colliderDescriptor(entry: ManifestCollider, scale: readonly [number, number, number]): RAPIER.ColliderDesc | null {

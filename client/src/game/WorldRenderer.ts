@@ -764,6 +764,29 @@ export class WorldRenderer {
       const root = new THREE.Group();
       const collision = gltf.scene;
       collision.position.sub(visualCenter);
+      let replacedCenterDoorPanel = false;
+      collision.traverse((child) => {
+        if (!(child instanceof THREE.Mesh)
+            || !child.name.toLowerCase().includes("wall_020_part_0055")) return;
+        child.visible = false;
+        replacedCenterDoorPanel = true;
+      });
+      if (replacedCenterDoorPanel) {
+        const rotation = new THREE.Quaternion(0, -0.7071065, 0, 0.707107);
+        for (const [name, size, position] of [
+          ["center-door-wall-side", [0.12, 8, 4], [-4.128819, 4.000001, -11.85918]],
+          ["center-door-wall-lintel", [0.12, 4, 4], [-0.128819, 6.000001, -11.85918]]
+        ] as const) {
+          const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(size[0], size[1], size[2]),
+            this.collisionDebugFillMaterial
+          );
+          mesh.name = name;
+          mesh.position.set(position[0], position[1], position[2]);
+          mesh.quaternion.copy(rotation);
+          collision.add(mesh);
+        }
+      }
       root.add(collision);
       root.position.set(...worldModel.position);
       root.rotation.set(...worldModel.rotation);

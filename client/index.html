@@ -134,10 +134,10 @@
         </div>
       </section>
 
-      <section id="pose-menu" class="pose-menu panel-lite hidden">
-        <header><span>BODY SHAPES</span><strong>CHOOSE A POSE</strong><small>Move while holding the pose</small></header>
-        <div class="pose-grid">
-          <button data-pose="stand"><b>I</b><span>STAND</span></button>
+      <section id="pose-menu" class="pose-menu hidden">
+        <header><span>BODY SHAPES</span><strong>HOLD R · PICK A POSE</strong></header>
+        <button id="pose-prev-page" class="pose-page-arrow pose-page-prev" type="button" aria-label="Previous poses">‹</button>
+        <div class="pose-grid" id="pose-grid">
           <button data-pose="aPose"><b>A</b><span>A POSE</span></button>
           <button data-pose="backBend"><b>)</b><span>BACK BEND</span></button>
           <button data-pose="bridge"><b>U</b><span>BRIDGE</span></button>
@@ -156,7 +156,8 @@
           <button data-pose="tree"><b>Y</b><span>TREE</span></button>
           <button data-pose="wideSquat"><b>M</b><span>WIDE SQUAT</span></button>
         </div>
-        <button id="close-pose-menu" class="close-pose-menu">CLOSE <kbd>R</kbd></button>
+        <button id="pose-next-page" class="pose-page-arrow pose-page-next" type="button" aria-label="Next poses">›</button>
+        <button id="close-pose-menu" class="pose-none-button" data-pose="stand" type="button"><b>X</b><span>NONE</span></button>
       </section>
 
       <div id="action-hint" class="action-hint">PRESS F TO PAINT</div>

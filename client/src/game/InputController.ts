@@ -11,25 +11,41 @@ export class InputController {
   onAction?: () => void;
   onPose?: () => void;
   onTogglePoses?: () => void;
+  onPoseMenuStart?: () => void;
+  onPoseMenuEnd?: () => void;
   onWhistle?: () => void;
   onTogglePaint?: () => void;
   private paintMode = false;
+  private poseMenuHeld = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (event) => {
       if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "Digit1"].includes(event.code)) event.preventDefault();
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
-      if (event.code === "KeyR" && !event.repeat) this.onTogglePoses?.();
+      if (event.code === "KeyR" && !event.repeat) {
+        this.poseMenuHeld = true;
+        this.onPoseMenuStart?.();
+      }
       if (event.code === "KeyF" && !event.repeat) this.onTogglePaint?.();
       if (event.code === "Digit1" && !event.repeat) this.onWhistle?.();
       if (event.code === "KeyV" && !event.repeat) this.faceCamera();
       if (event.code === "Escape" && document.pointerLockElement === this.canvas) document.exitPointerLock();
     });
-    window.addEventListener("keyup", (event) => this.keys.delete(event.code));
+    window.addEventListener("keyup", (event) => {
+      this.keys.delete(event.code);
+      if (event.code === "KeyR" && this.poseMenuHeld) {
+        this.poseMenuHeld = false;
+        this.onPoseMenuEnd?.();
+      }
+    });
     window.addEventListener("blur", () => {
       this.keys.clear();
       this.jumpQueued = false;
+      if (this.poseMenuHeld) {
+        this.poseMenuHeld = false;
+        this.onPoseMenuEnd?.();
+      }
     });
     document.addEventListener("mousemove", (event) => {
       if (this.paintMode || document.pointerLockElement !== this.canvas) return;
@@ -49,15 +65,21 @@ export class InputController {
       this.jumpQueued = false;
       return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: this.yaw };
     }
-    const forward = Number(this.keys.has("KeyW")) - Number(this.keys.has("KeyS"));
-    const strafe = Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA"));
+    const { forward, strafe, sprint } = this.movement();
     const jump = this.jumpQueued;
-    const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     const climbUp = this.keys.has("Space");
-    const climbDown = sprint;
+    const climbDown = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     const climb = climbUp ? 1 : climbDown ? -1 : 0;
     this.jumpQueued = false;
     return { sequence: ++this.sequence, forward, strafe, jump, sprint, climb, detach: false, yaw: this.yaw };
+  }
+
+  movement(): { forward: number; strafe: number; sprint: boolean } {
+    if (this.paintMode) return { forward: 0, strafe: 0, sprint: false };
+    const forward = Number(this.keys.has("KeyW")) - Number(this.keys.has("KeyS"));
+    const strafe = Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA"));
+    const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    return { forward, strafe, sprint };
   }
 
   aim(): { yaw: number; pitch: number } {

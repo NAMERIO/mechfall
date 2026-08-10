@@ -43,7 +43,10 @@ const paintButton = element<HTMLButtonElement>("#paint-button");
 const poseButton = element<HTMLButtonElement>("#pose-button");
 const poseLabel = element<HTMLElement>("#pose-label");
 const poseMenu = element<HTMLElement>("#pose-menu");
+const poseGrid = element<HTMLElement>("#pose-grid");
 const closePoseMenuButton = element<HTMLButtonElement>("#close-pose-menu");
+const posePrevPageButton = element<HTMLButtonElement>("#pose-prev-page");
+const poseNextPageButton = element<HTMLButtonElement>("#pose-next-page");
 const whistleButton = element<HTMLButtonElement>("#whistle-button");
 const crosshair = element<HTMLElement>("#crosshair");
 const actionHint = element<HTMLElement>("#action-hint");
@@ -83,6 +86,7 @@ let toastTimeout = 0;
 let paintMode = false;
 let colorPicking = false;
 let poseMenuOpen = false;
+let posePage = 0;
 let painting = false;
 let orbitingPaintCamera = false;
 let paintColor = "#f5f0df";
@@ -136,8 +140,11 @@ colorWheel.addEventListener("pointermove", (event) => {
 sampleColorButton.addEventListener("click", () => setColorPicking(!colorPicking));
 paintButton.addEventListener("click", togglePaintMode);
 poseButton.addEventListener("click", togglePoseMenu);
-closePoseMenuButton.addEventListener("click", togglePoseMenu);
+closePoseMenuButton.addEventListener("click", () => selectPose("stand"));
+posePrevPageButton.addEventListener("click", () => setPosePage(posePage - 1));
+poseNextPageButton.addEventListener("click", () => setPosePage(posePage + 1));
 for (const poseChoice of document.querySelectorAll<HTMLButtonElement>("[data-pose]")) {
+  if (poseChoice === closePoseMenuButton) continue;
   poseChoice.addEventListener("click", () => selectPose(poseChoice.dataset.pose as Pose));
 }
 whistleButton.addEventListener("click", whistle);
@@ -150,6 +157,8 @@ for (const swatch of document.querySelectorAll<HTMLButtonElement>("[data-paint-c
 }
 input.onPose = cyclePose;
 input.onTogglePoses = togglePoseMenu;
+input.onPoseMenuStart = () => setPoseMenu(true);
+input.onPoseMenuEnd = () => setPoseMenu(false);
 input.onWhistle = whistle;
 input.onTogglePaint = togglePaintMode;
 input.onAction = () => {
@@ -627,9 +636,43 @@ function setPoseMenu(active: boolean): void {
   if (active && paintMode) setPaintMode(false);
   poseMenuOpen = Boolean(active && self?.role === "hider" && self.alive);
   input.setPaintMode(paintMode || poseMenuOpen);
+  if (poseMenuOpen) renderPoseWheel();
   poseMenu.classList.toggle("hidden", !poseMenuOpen);
   poseButton.classList.toggle("active", poseMenuOpen);
   if (!poseMenuOpen && active) showToast("POSES ARE ONLY AVAILABLE TO ACTIVE HIDERS");
+}
+
+function setPosePage(page: number): void {
+  const pageCount = Math.max(1, Math.ceil(poseChoices.length / POSES_PER_PAGE));
+  posePage = (page + pageCount) % pageCount;
+  renderPoseWheel();
+}
+
+function renderPoseWheel(): void {
+  const pageCount = Math.max(1, Math.ceil(poseChoices.length / POSES_PER_PAGE));
+  posePage = Math.max(0, Math.min(pageCount - 1, posePage));
+  const start = posePage * POSES_PER_PAGE;
+  const visible = new Set(poseChoices.slice(start, start + POSES_PER_PAGE));
+  poseChoices.forEach((button) => {
+    const slot = poseChoices.indexOf(button) - start;
+    const shown = visible.has(button);
+    button.hidden = false;
+    button.classList.toggle("pose-wheel-slot", shown);
+    button.classList.toggle("pose-wheel-hidden", !shown);
+    button.disabled = !shown;
+    if (!shown) return;
+    const pose = button.dataset.pose as Pose;
+    const poseIconIndex = POSE_ICON_ORDER.indexOf(pose);
+    button.style.setProperty("--pose-icon-x", `${poseIconIndex * -POSE_ICON_DISPLAY_SIZE}px`);
+    button.style.setProperty("--pose-icon-x-sm", `${poseIconIndex * -POSE_ICON_MOBILE_SIZE}px`);
+    const angle = (((slot + 0.5) / POSES_PER_PAGE) * Math.PI * 2) - Math.PI / 2;
+    button.style.setProperty("--slot-x", `${50 + Math.cos(angle) * 31}%`);
+    button.style.setProperty("--slot-y", `${50 + Math.sin(angle) * 31}%`);
+  });
+  poseMenu.style.setProperty("--pose-page", `${posePage + 1}`);
+  poseMenu.style.setProperty("--pose-pages", `${pageCount}`);
+  posePrevPageButton.hidden = pageCount <= 1;
+  poseNextPageButton.hidden = pageCount <= 1;
 }
 
 function selectPose(pose: Pose): void {
@@ -925,3 +968,29 @@ const POSE_LABELS: Record<Pose, string> = {
   tree: "TREE",
   wideSquat: "WIDE SQUAT"
 };
+
+const POSES_PER_PAGE = 8;
+const POSE_ICON_DISPLAY_SIZE = 118;
+const POSE_ICON_MOBILE_SIZE = 88;
+const POSE_ICON_ORDER: Pose[] = [
+  "stand",
+  "aPose",
+  "backBend",
+  "bridge",
+  "crossLegged",
+  "crouchedFetal",
+  "curledUp",
+  "fetal",
+  "handOnHip",
+  "layDown",
+  "handUp",
+  "mermaid",
+  "openWide",
+  "sideLying",
+  "sit",
+  "tPose",
+  "tree",
+  "wideSquat"
+];
+const poseChoices = Array.from(poseGrid.querySelectorAll<HTMLButtonElement>("[data-pose]"));
+renderPoseWheel();

@@ -44,6 +44,7 @@ interface Avatar {
   bodyPitch?: number;
   bodyPitchApplied?: number;
   bodyPitchBones?: Array<{ bone: THREE.Object3D; weight: number }>;
+  locomotionArmBones?: Partial<Record<LocomotionArmBoneName, THREE.Object3D>>;
   mixer?: THREE.AnimationMixer;
   actions?: Map<string, THREE.AnimationAction>;
   activeAction?: THREE.AnimationAction;
@@ -791,9 +792,11 @@ export class WorldRenderer {
     const paintSurfaces = new Map<PaintPart, PaintSurface>();
     let characterMesh: THREE.Mesh | undefined;
     const bodyPitchBones: Array<{ bone: THREE.Object3D; weight: number }> = [];
+    const locomotionArmBones: Partial<Record<LocomotionArmBoneName, THREE.Object3D>> = {};
     visual.traverse((child) => {
       const pitchWeight = BODY_PITCH_BONES.get(child.name);
       if (pitchWeight !== undefined) bodyPitchBones.push({ bone: child, weight: pitchWeight });
+      if (LOCOMOTION_ARM_POSE.has(child.name as LocomotionArmBoneName)) locomotionArmBones[child.name as LocomotionArmBoneName] = child;
       if (!(child instanceof THREE.Mesh)) return;
       child.material = material;
       child.castShadow = true;
@@ -850,6 +853,7 @@ export class WorldRenderer {
       bodyPitch: 0,
       bodyPitchApplied: 0,
       bodyPitchBones,
+      locomotionArmBones,
       mixer,
       actions,
       hunterMark,
@@ -1091,6 +1095,32 @@ export class WorldRenderer {
     avatar.bodyPitchApplied = 0;
   }
 
+  private localAvatarYaw(): number {
+    if (!this.input) return 0;
+    const { forward, strafe } = this.input.movement();
+    if (Math.abs(forward) > 0.05 || Math.abs(strafe) > 0.05) return this.input.yaw - Math.atan2(strafe, forward);
+    return this.input.yaw;
+  }
+
+  private remoteAvatarYaw(avatar: Avatar): number {
+    const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
+    if (avatar.state.cling === undefined && planarSpeed > 0.3) {
+      return Math.atan2(-avatar.state.velocity.x, -avatar.state.velocity.z);
+    }
+    return avatar.targetYaw;
+  }
+
+  private applyLocomotionArmPose(avatar: Avatar, running: boolean, displayPose: PlayerState["pose"], straightSprint: boolean): void {
+    if (avatar.procedural || avatar.state.role === "hunter" || !running || !straightSprint || displayPose !== "stand") return;
+    for (const [name, target] of LOCOMOTION_ARM_POSE) {
+      const bone = avatar.locomotionArmBones?.[name];
+      if (!bone) continue;
+      bone.rotation.x = THREE.MathUtils.lerp(bone.rotation.x, target.x, LOCOMOTION_ARM_POSE_BLEND);
+      bone.rotation.y = THREE.MathUtils.lerp(bone.rotation.y, target.y, LOCOMOTION_ARM_POSE_BLEND);
+      bone.rotation.z = THREE.MathUtils.lerp(bone.rotation.z, target.z, LOCOMOTION_ARM_POSE_BLEND);
+    }
+  }
+
   private animate = (): void => {
     if (!this.running) return;
     requestAnimationFrame(this.animate);
@@ -1110,8 +1140,10 @@ export class WorldRenderer {
       const positionResponse = 1 - Math.exp(-(id === this.selfId ? 26 : 16) * dt);
       avatar.root.position.lerp(avatar.target, positionResponse);
 
-      const desiredYaw = id === this.selfId && this.input ? this.input.yaw : avatar.targetYaw;
-      const yawResponse = id === this.selfId ? 1 : 1 - Math.exp(-18 * dt);
+      const desiredYaw = id === this.selfId && this.input
+        ? this.localAvatarYaw()
+        : this.remoteAvatarYaw(avatar);
+      const yawResponse = 1 - Math.exp(-(id === this.selfId ? LOCAL_TURN_RESPONSE : REMOTE_TURN_RESPONSE) * dt);
       avatar.root.rotation.y += shortestAngle(avatar.root.rotation.y, desiredYaw) * yawResponse;
       this.clearAvatarBodyPitch(avatar);
       const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
@@ -1138,6 +1170,10 @@ export class WorldRenderer {
         }
       } else if (!avatar.procedural) {
         const running = moving && planarSpeed > GAME.hunterSpeed + 0.35;
+        const movementInput = id === this.selfId ? this.input?.movement() : undefined;
+        const straightSprint = movementInput
+          ? movementInput.forward > 0 && Math.abs(movementInput.strafe) < 0.05
+          : Math.abs(shortestAngle(avatar.root.rotation.y, avatar.targetYaw)) < 0.2;
         const clipName = avatar.state.role === "hunter"
           ? moving
             ? running ? HUNTER_RUN_CLIP : HUNTER_WALK_CLIP
@@ -1153,6 +1189,7 @@ export class WorldRenderer {
         const timeScale = moving ? THREE.MathUtils.clamp(planarSpeed / expectedSpeed, 0.7, 1.35) : 1;
         this.setAvatarAnimation(avatar, clipName, displayPose === "stand" && moving, timeScale);
         avatar.mixer?.update(dt);
+        this.applyLocomotionArmPose(avatar, running, displayPose, straightSprint);
       }
       this.applyAvatarBodyPitch(avatar);
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
@@ -1522,6 +1559,8 @@ function isAttachedMovement(state: PlayerState): boolean {
 
 const PAINT_TEXTURE_SIZE = 1024;
 const CHARACTER_HEIGHT = 2.45;
+const LOCAL_TURN_RESPONSE = 18;
+const REMOTE_TURN_RESPONSE = 18;
 const MAX_BODY_PITCH_UP = Math.PI / 2;
 const MAX_BODY_PITCH_DOWN = 1.85;
 const BODY_PITCH_STRENGTH = 3.3;
@@ -1532,6 +1571,14 @@ const BODY_PITCH_BONES = new Map<string, number>([
   ["Bone003", 0.2],
   ["Bone004", 0.1]
 ]);
+const LOCOMOTION_ARM_POSE = new Map([
+  ["upper_armR", new THREE.Euler(-0.04, 0.02, 0.96)],
+  ["lower_armR", new THREE.Euler(-0.06, -0.02, 0.04)],
+  ["upper_armL", new THREE.Euler(-0.04, -0.02, -0.96)],
+  ["lower_armL", new THREE.Euler(-0.06, 0.02, -0.04)]
+] as const);
+type LocomotionArmBoneName = "upper_armR" | "lower_armR" | "upper_armL" | "lower_armL";
+const LOCOMOTION_ARM_POSE_BLEND = 0.72;
 const WALK_CLIP = "ChameleonMan|Walking";
 const RUN_CLIP = "ChameleonMan|Running";
 const HUNTER_IDLE_CLIP = "ChameleonMan|Pose_HandOnHip";

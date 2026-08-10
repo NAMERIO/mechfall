@@ -82,6 +82,7 @@ export class WorldRenderer {
   private paintOrbitYaw = 0;
   private paintOrbitPitch = 0;
   private cameraDistance = 5.4;
+  private targetCameraDistance = 5.4;
   private characterTemplate?: THREE.Group;
   private characterAnimations: THREE.AnimationClip[] = [];
   private characterAlignment?: CharacterAlignment;
@@ -223,8 +224,8 @@ export class WorldRenderer {
 
   zoomCamera(deltaY: number): void {
     if (!Number.isFinite(deltaY) || deltaY === 0) return;
-    const zoomDelta = Math.sign(deltaY) * THREE.MathUtils.clamp(Math.abs(deltaY) * 0.006, 0.18, 0.75);
-    this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + zoomDelta, 2.8, 15);
+    const zoomDelta = Math.sign(deltaY) * THREE.MathUtils.clamp(Math.abs(deltaY) * 0.0045, 0.1, 0.48);
+    this.targetCameraDistance = THREE.MathUtils.clamp(this.targetCameraDistance + zoomDelta, 2.8, 15);
   }
 
   applySnapshot(snapshot: ServerSnapshot): void {
@@ -1209,11 +1210,13 @@ export class WorldRenderer {
       const inputYaw = this.input?.yaw ?? focus.state.yaw;
       const yaw = inputYaw + (this.input?.cameraYawOffset ?? 0) + (this.paintView ? this.paintOrbitYaw : 0);
       const pitch = (this.input?.pitch ?? -0.2) + (this.input?.cameraPitchOffset ?? 0) + (this.paintView ? this.paintOrbitPitch : 0);
+      this.cameraDistance = THREE.MathUtils.lerp(this.cameraDistance, this.targetCameraDistance, 1 - Math.exp(-CAMERA_ZOOM_RESPONSE * dt));
       const distance = this.cameraDistance;
       const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose], 0));
       const horizontal = Math.cos(pitch) * distance;
       const desired = target.clone().add(new THREE.Vector3(Math.sin(yaw) * horizontal, 1.2 + Math.sin(-pitch) * distance, Math.cos(yaw) * horizontal));
-      this.camera.position.lerp(desired, 1 - Math.exp(-12 * dt));
+      const safeDesired = this.resolveCameraObstruction(target, desired);
+      this.camera.position.lerp(safeDesired, 1 - Math.exp(-CAMERA_FOLLOW_RESPONSE * dt));
       this.camera.lookAt(target);
     } else {
       this.camera.position.set(18, 16, 22);
@@ -1233,6 +1236,41 @@ export class WorldRenderer {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
   }
+
+  private resolveCameraObstruction(target: THREE.Vector3, desired: THREE.Vector3): THREE.Vector3 {
+    const offset = desired.clone().sub(target);
+    const distance = offset.length();
+    if (distance <= MIN_CAMERA_COLLISION_DISTANCE) return desired;
+    if (isCameraPositionSafe(desired)) return desired;
+
+    let near = MIN_CAMERA_COLLISION_DISTANCE / distance;
+    let far = 1;
+    for (let step = 0; step < CAMERA_COLLISION_SEARCH_STEPS; step += 1) {
+      const mid = (near + far) / 2;
+      const candidate = target.clone().lerp(desired, mid);
+      if (isCameraPositionSafe(candidate)) near = mid;
+      else far = mid;
+    }
+    return target.clone().lerp(desired, Math.max(0, near - (CAMERA_COLLISION_BUFFER / distance)));
+  }
+}
+
+function isCameraPositionSafe(position: THREE.Vector3): boolean {
+  const worldLimit = (WORLD_SIZE / 2) - CAMERA_COLLISION_RADIUS;
+  if (position.x < -worldLimit || position.x > worldLimit || position.z < -worldLimit || position.z > worldLimit) return false;
+  if (position.y < CAMERA_COLLISION_RADIUS || position.y > 5.8) return false;
+  for (const box of WORLD_BOXES) {
+    if (!box.solid) continue;
+    if (
+      position.x >= box.position[0] - box.size[0] / 2 - CAMERA_COLLISION_RADIUS
+      && position.x <= box.position[0] + box.size[0] / 2 + CAMERA_COLLISION_RADIUS
+      && position.y >= box.position[1] - box.size[1] / 2 - CAMERA_COLLISION_RADIUS
+      && position.y <= box.position[1] + box.size[1] / 2 + CAMERA_COLLISION_RADIUS
+      && position.z >= box.position[2] - box.size[2] / 2 - CAMERA_COLLISION_RADIUS
+      && position.z <= box.position[2] + box.size[2] / 2 + CAMERA_COLLISION_RADIUS
+    ) return false;
+  }
+  return true;
 }
 
 function createHunterCarryClips(clips: THREE.AnimationClip[]): THREE.AnimationClip[] {
@@ -1559,6 +1597,12 @@ function isAttachedMovement(state: PlayerState): boolean {
 
 const PAINT_TEXTURE_SIZE = 1024;
 const CHARACTER_HEIGHT = 2.45;
+const CAMERA_COLLISION_RADIUS = 0.34;
+const CAMERA_COLLISION_BUFFER = 0.18;
+const CAMERA_COLLISION_SEARCH_STEPS = 8;
+const MIN_CAMERA_COLLISION_DISTANCE = 0.45;
+const CAMERA_ZOOM_RESPONSE = 4.5;
+const CAMERA_FOLLOW_RESPONSE = 3.6;
 const LOCAL_TURN_RESPONSE = 18;
 const REMOTE_TURN_RESPONSE = 18;
 const MAX_BODY_PITCH_UP = Math.PI / 2;

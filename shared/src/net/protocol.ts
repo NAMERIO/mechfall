@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 14;
+export const PROTOCOL_VERSION = 15;
 export const MAX_GAME_PACKET_BYTES = 16_384;
 export const MAX_PAINT_STROKES_PER_PACKET = 32;
 
@@ -15,6 +15,7 @@ export const GAME = {
   hunterSpeed: 6.65,
   hunterVisualScale: 1.9,
   hunterCameraScale: 1.25,
+  hunterEyeHeight: 3.95,
   sprintSpeed: 10.2,
   hunterSprintSpeed: 10.6,
   crouchSpeed: 3.2,
@@ -88,6 +89,10 @@ export interface PlayerState {
   position: Vec3;
   velocity: Vec3;
   yaw: number;
+  /** Gun/camera yaw can differ from body yaw while free-looking. */
+  aimYaw?: number;
+  /** Current look pitch. Optional while older snapshots/tests migrate. */
+  aimPitch?: number;
   role: Role;
   pose: Pose;
   color: string;
@@ -138,6 +143,8 @@ export interface InputPayload {
   climb?: number;
   detach?: boolean;
   yaw: number;
+  aimYaw?: number;
+  pitch?: number;
 }
 
 export type ClientMessage =

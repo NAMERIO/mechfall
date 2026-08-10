@@ -109,6 +109,10 @@ export class WorldRenderer {
   private readonly hunterArmLocalDirection = new THREE.Vector3();
   private readonly hunterArmRestDirection = new THREE.Vector3();
   private readonly hunterArmQuaternion = new THREE.Quaternion();
+  private readonly hunterHandPosition = new THREE.Vector3();
+  private readonly hunterWeaponGripOffset = new THREE.Vector3();
+  private readonly hunterWeaponFineOffset = new THREE.Vector3();
+  private firstPersonHunterActive = false;
   private selfId = "";
   private roundPhase: ServerSnapshot["round"]["phase"] = "waiting";
   private input?: InputController;
@@ -141,6 +145,7 @@ export class WorldRenderer {
 
     this.scene.background = new THREE.Color("#b8c4ba");
     this.scene.fog = new THREE.FogExp2("#b8c4ba", 0.018);
+    this.scene.add(this.camera);
     this.collisionDebugRoot.name = "collision-debug";
     this.collisionDebugRoot.visible = false;
     this.scene.add(this.collisionDebugRoot);
@@ -600,9 +605,8 @@ export class WorldRenderer {
 
   showShot(hunterId: string, origin: { x: number; y: number; z: number }, end: { x: number; y: number; z: number }): void {
     const hunter = this.avatars.get(hunterId);
-    const start = hunter
-      ? hunter.muzzle.getWorldPosition(new THREE.Vector3())
-      : new THREE.Vector3(origin.x, origin.y, origin.z);
+    const start = hunter?.muzzle.getWorldPosition(new THREE.Vector3())
+      ?? new THREE.Vector3(origin.x, origin.y, origin.z);
     const finish = new THREE.Vector3(end.x, end.y, end.z);
     const tracer = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([start, finish]),
@@ -986,7 +990,7 @@ export class WorldRenderer {
       if (normalizedName === "upperarmr") rightUpperArmBone = child;
       if (normalizedName === "lowerarmr") rightLowerArmBone = child;
       if (normalizedName === "handr") rightHandBone = child;
-      const pitchWeight = BODY_PITCH_BONES.get(child.name);
+      const pitchWeight = BODY_PITCH_BONES.get(normalizedName);
       if (pitchWeight !== undefined) bodyPitchBones.push({ bone: child, weight: pitchWeight });
       if (LOCOMOTION_ARM_POSE.has(child.name as LocomotionArmBoneName)) locomotionArmBones[child.name as LocomotionArmBoneName] = child;
       if (!(child instanceof THREE.Mesh)) return;
@@ -1214,7 +1218,8 @@ export class WorldRenderer {
   }
 
   private showMuzzleFlash(avatar: Avatar): void {
-    avatar.recoilUntil = performance.now() + 140;
+    const now = performance.now();
+    avatar.recoilUntil = now + 140;
     const position = avatar.muzzle.getWorldPosition(new THREE.Vector3());
     const flash = new THREE.Mesh(
       new THREE.SphereGeometry(0.12, 8, 6),
@@ -1319,12 +1324,14 @@ export class WorldRenderer {
 
   private localAvatarYaw(): number {
     if (!this.input) return 0;
+    if (this.avatars.get(this.selfId)?.state.role === "hunter") return this.input.yaw;
     const { forward, strafe } = this.input.movement();
     if (Math.abs(forward) > 0.05 || Math.abs(strafe) > 0.05) return this.input.yaw - Math.atan2(strafe, forward);
     return this.input.yaw;
   }
 
   private remoteAvatarYaw(avatar: Avatar): number {
+    if (avatar.state.role === "hunter") return avatar.targetYaw;
     const planarSpeed = Math.hypot(avatar.state.velocity.x, avatar.state.velocity.z);
     if (avatar.state.cling === undefined && planarSpeed > 0.3) {
       return Math.atan2(-avatar.state.velocity.x, -avatar.state.velocity.z);
@@ -1350,9 +1357,11 @@ export class WorldRenderer {
     const hand = avatar.rightHandBone;
     if (!upperArm || !lowerArm || !hand) return;
 
+    const pitch = this.hunterAimPitch(avatar);
+    const relativeYaw = shortestAngle(avatar.root.rotation.y, this.hunterAimYaw(avatar));
     avatar.root.getWorldQuaternion(this.hunterArmQuaternion);
     this.hunterArmDirection
-      .set(0.08, -0.08, -1)
+      .set(-Math.sin(relativeYaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(relativeYaw) * Math.cos(pitch))
       .applyQuaternion(this.hunterArmQuaternion)
       .normalize();
     this.pointBoneAtWorldDirection(upperArm, lowerArm, this.hunterArmDirection);
@@ -1368,6 +1377,45 @@ export class WorldRenderer {
     bone.updateWorldMatrix(true, true);
   }
 
+  private updateHunterWeaponTransform(avatar: Avatar, recoilRemaining: number): void {
+    if (avatar.state.role !== "hunter") return;
+    const pitch = this.hunterAimPitch(avatar);
+    const relativeYaw = shortestAngle(avatar.root.rotation.y, this.hunterAimYaw(avatar));
+    avatar.weapon.rotation.order = "YXZ";
+    avatar.weapon.rotation.set(pitch, relativeYaw, 0);
+    if (!avatar.procedural && avatar.rightHandBone) {
+      avatar.root.updateWorldMatrix(true, true);
+      avatar.rightHandBone.getWorldPosition(this.hunterHandPosition);
+      avatar.root.worldToLocal(this.hunterHandPosition);
+    } else {
+      this.hunterHandPosition.set(0.48, 1.42, -1.02);
+    }
+    this.hunterWeaponGripOffset
+      .copy(HUNTER_WEAPON_GRIP_POSITION)
+      .applyQuaternion(avatar.weapon.quaternion);
+    avatar.weapon.position.copy(this.hunterHandPosition).sub(this.hunterWeaponGripOffset);
+    this.hunterWeaponFineOffset
+      .copy(HUNTER_WEAPON_FINE_OFFSET)
+      .applyQuaternion(avatar.weapon.quaternion);
+    avatar.weapon.position.add(this.hunterWeaponFineOffset);
+    avatar.weaponBasePosition.copy(avatar.weapon.position);
+    if (recoilRemaining > 0) {
+      avatar.weapon.translateZ(Math.sin((recoilRemaining / 140) * Math.PI) * 0.13);
+    }
+  }
+
+  private hunterAimPitch(avatar: Avatar): number {
+    if (avatar.state.id === this.selfId && this.input) {
+      return THREE.MathUtils.clamp(this.input.aim().pitch + HUNTER_NEUTRAL_INPUT_PITCH, -0.75, 0.45);
+    }
+    return hunterAimRadians(avatar.state);
+  }
+
+  private hunterAimYaw(avatar: Avatar): number {
+    if (avatar.state.id === this.selfId && this.input) return this.input.aim().yaw;
+    return hunterAimYaw(avatar.state);
+  }
+
   private animate = (): void => {
     if (!this.running) return;
     requestAnimationFrame(this.animate);
@@ -1375,7 +1423,14 @@ export class WorldRenderer {
     const elapsed = this.clock.elapsedTime;
 
     const renderTime = performance.now();
+    const selfAvatar = this.avatars.get(this.selfId);
+    this.firstPersonHunterActive = Boolean(
+      selfAvatar?.state.alive
+      && selfAvatar.state.role === "hunter"
+      && !this.paintView
+    );
     for (const [id, avatar] of this.avatars) {
+      avatar.root.visible = avatar.state.alive;
       // Keep the render target moving between network packets instead of easing
       // toward a stationary snapshot and producing a start/stop cadence.
       const extrapolation = Math.min((renderTime - avatar.snapshotReceivedAt) / 1_000, 0.1);
@@ -1400,19 +1455,32 @@ export class WorldRenderer {
       const canBodyPitch = id === this.selfId
         && avatar.state.cling === undefined
         && displayPose === "stand"
-        && (this.roundPhase === "waiting" || avatar.state.role === "hunter");
+        && !this.firstPersonHunterActive
+        && this.roundPhase === "waiting";
       const aimPitch = this.input ? this.input.aim().pitch : 0;
-      const targetBodyPitch = canBodyPitch ? THREE.MathUtils.clamp(aimPitch * BODY_PITCH_STRENGTH, -MAX_BODY_PITCH_UP, MAX_BODY_PITCH_DOWN) : 0;
-      avatar.bodyPitch = THREE.MathUtils.lerp(avatar.bodyPitch ?? 0, targetBodyPitch, 1 - Math.exp(-BODY_PITCH_RESPONSE * dt));
+      const remoteHunterPitch = id !== this.selfId
+        && avatar.state.role === "hunter"
+        && avatar.state.cling === undefined
+        && displayPose === "stand"
+        ? THREE.MathUtils.clamp(hunterAimRadians(avatar.state) * HUNTER_BODY_PITCH_STRENGTH, -0.78, 0.58)
+        : undefined;
+      const targetBodyPitch = remoteHunterPitch
+        ?? (canBodyPitch ? THREE.MathUtils.clamp(aimPitch * BODY_PITCH_STRENGTH, -MAX_BODY_PITCH_UP, MAX_BODY_PITCH_DOWN) : 0);
+      avatar.bodyPitch = this.firstPersonHunterActive && id === this.selfId
+        ? 0
+        : THREE.MathUtils.lerp(avatar.bodyPitch ?? 0, targetBodyPitch, 1 - Math.exp(-BODY_PITCH_RESPONSE * dt));
       const stride = moving ? Math.sin(elapsed * 12) * 0.48 : 0;
       if (avatar.procedural && displayPose === "stand" && avatar.leftLeg && avatar.rightLeg && avatar.leftArm && avatar.rightArm) {
         avatar.leftLeg.rotation.x = stride;
         avatar.rightLeg.rotation.x = -stride;
         if (avatar.state.role === "hunter") {
+          const hunterPitch = this.hunterAimPitch(avatar);
+          const hunterYaw = shortestAngle(avatar.root.rotation.y, this.hunterAimYaw(avatar));
           avatar.leftArm.position.set(-0.63, 1.15, 0);
           avatar.rightArm.position.set(0.48, 1.42, -0.46);
           avatar.leftArm.rotation.set(-stride * 0.2, 0, -0.08);
-          avatar.rightArm.rotation.set(-Math.PI / 2, 0, 0);
+          avatar.rightArm.rotation.order = "YXZ";
+          avatar.rightArm.rotation.set(-Math.PI / 2 + hunterPitch, hunterYaw, 0);
         } else {
           avatar.leftArm.position.set(-0.63, 1.15, 0);
           avatar.rightArm.position.set(0.63, 1.15, 0);
@@ -1442,12 +1510,11 @@ export class WorldRenderer {
         avatar.mixer?.update(dt);
         this.applyLocomotionArmPose(avatar, running, displayPose, straightSprint);
       }
-      this.applyHunterPointingArm(avatar);
       this.applyAvatarBodyPitch(avatar);
+      this.applyHunterPointingArm(avatar);
       avatar.whistleRing.visible = avatar.state.whistlingUntil > Date.now();
       const recoilRemaining = Math.max(0, avatar.recoilUntil - renderTime);
-      avatar.weapon.position.copy(avatar.weaponBasePosition);
-      if (recoilRemaining > 0) avatar.weapon.position.z += Math.sin((recoilRemaining / 140) * Math.PI) * 0.13;
+      this.updateHunterWeaponTransform(avatar, recoilRemaining);
       if (avatar.whistleRing.visible) {
         const pulse = 1 + ((elapsed * 1.8) % 1) * 2.4;
         avatar.whistleRing.scale.setScalar(pulse);
@@ -1455,13 +1522,32 @@ export class WorldRenderer {
       }
     }
 
-    const selfAvatar = this.avatars.get(this.selfId);
     const focus = selfAvatar?.state.alive ? selfAvatar : [...this.avatars.values()].find((avatar) => avatar.state.alive) ?? selfAvatar;
     if (focus) {
       this.input?.updateCamera(dt);
       const inputYaw = this.input?.yaw ?? focus.state.yaw;
       const yaw = inputYaw + (this.input?.cameraYawOffset ?? 0) + (this.paintView ? this.paintOrbitYaw : 0);
       const pitch = (this.input?.pitch ?? -0.2) + (this.input?.cameraPitchOffset ?? 0) + (this.paintView ? this.paintOrbitPitch : 0);
+      if (this.firstPersonHunterActive && focus === selfAvatar) {
+        const firstPersonPitch = THREE.MathUtils.clamp(pitch + HUNTER_NEUTRAL_INPUT_PITCH, -0.75, 0.45);
+        const faceOffsetHorizontal = Math.cos(firstPersonPitch) * HUNTER_FIRST_PERSON_FACE_OFFSET;
+        this.camera.position.set(
+          focus.root.position.x - Math.sin(yaw) * faceOffsetHorizontal,
+          focus.root.position.y + HUNTER_FIRST_PERSON_EYE_HEIGHT + Math.sin(firstPersonPitch) * HUNTER_FIRST_PERSON_FACE_OFFSET,
+          focus.root.position.z - Math.cos(yaw) * faceOffsetHorizontal
+        );
+        this.camera.rotation.order = "YXZ";
+        this.camera.rotation.set(firstPersonPitch, yaw, 0);
+        if (this.camera.fov !== HUNTER_FIRST_PERSON_FOV) {
+          this.camera.fov = HUNTER_FIRST_PERSON_FOV;
+          this.camera.updateProjectionMatrix();
+        }
+        this.cameraRigInitialized = false;
+      } else {
+        if (this.camera.fov !== DEFAULT_CAMERA_FOV) {
+          this.camera.fov = DEFAULT_CAMERA_FOV;
+          this.camera.updateProjectionMatrix();
+        }
       this.cameraDistance = THREE.MathUtils.lerp(this.cameraDistance, this.targetCameraDistance, 1 - Math.exp(-CAMERA_ZOOM_RESPONSE * dt));
       const distance = this.cameraDistance;
       const roleScale = focus.state.role === "hunter" ? GAME.hunterCameraScale : 1;
@@ -1493,6 +1579,7 @@ export class WorldRenderer {
         this.camera.position.lerp(safeDesired, 1 - Math.exp(-CAMERA_POSITION_RESPONSE * dt));
       }
       this.camera.lookAt(this.cameraFocus);
+      }
     } else {
       this.cameraRigInitialized = false;
       this.camera.position.set(18, 16, 22);
@@ -1686,7 +1773,7 @@ function createShotgun(template?: THREE.Group): { weapon: THREE.Group; muzzle: T
   muzzle.name = "ShotgunMuzzle";
   muzzle.position.set(0, 0.075, -1.2);
   weapon.add(muzzle);
-  weapon.scale.setScalar(0.82);
+  weapon.scale.setScalar(HUNTER_WEAPON_SCALE);
   return { weapon, muzzle };
 }
 
@@ -1903,6 +1990,14 @@ const CHARACTER_HEIGHT = 2.45;
 const CLING_VISUAL_INSET = 0.26;
 const CLING_VISUAL_RESPONSE = 24;
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const DEFAULT_CAMERA_FOV = 58;
+const HUNTER_FIRST_PERSON_FOV = 72;
+const HUNTER_NEUTRAL_INPUT_PITCH = 0.22;
+const HUNTER_FIRST_PERSON_EYE_HEIGHT = GAME.hunterEyeHeight;
+const HUNTER_FIRST_PERSON_FACE_OFFSET = 0.18;
+const HUNTER_WEAPON_SCALE = 1.06;
+const HUNTER_WEAPON_GRIP_POSITION = new THREE.Vector3(0, -0.257, 0.373);
+const HUNTER_WEAPON_FINE_OFFSET = new THREE.Vector3(-0.2, -0.2, 0.04);
 const CAMERA_COLLISION_RADIUS = 0.34;
 const CAMERA_COLLISION_BUFFER = 0.18;
 const CAMERA_COLLISION_SEARCH_STEPS = 8;
@@ -1919,11 +2014,12 @@ const MAX_BODY_PITCH_UP = Math.PI / 2;
 const MAX_BODY_PITCH_DOWN = 1.85;
 const BODY_PITCH_STRENGTH = 3.3;
 const BODY_PITCH_RESPONSE = 16;
+const HUNTER_BODY_PITCH_STRENGTH = 1.25;
 const BODY_PITCH_BONES = new Map<string, number>([
-  ["Bone001", 0.42],
-  ["Bone002", 0.28],
-  ["Bone003", 0.2],
-  ["Bone004", 0.1]
+  ["bone001", 0.42],
+  ["bone002", 0.28],
+  ["bone003", 0.2],
+  ["bone004", 0.1]
 ]);
 const LOCOMOTION_ARM_POSE = new Map([
   ["upper_armR", new THREE.Euler(-0.04, 0.02, 0.96)],
@@ -1939,6 +2035,14 @@ const HUNTER_IDLE_CLIP = "ChameleonMan|Pose_Straight";
 const HUNTER_WALK_CLIP = "ChameleonMan|WalkingWithShotgun";
 const HUNTER_RUN_CLIP = "ChameleonMan|RunningWithShotgun";
 const HUNTER_POSE_BONES = ["Bone.001", "shoulder.R", "upper_arm.R", "lower_arm.R", "hand.R", "shoulder.L", "upper_arm.L", "lower_arm.L", "hand.L"] as const;
+
+function hunterAimRadians(state: PlayerState): number {
+  return THREE.MathUtils.clamp((state.aimPitch ?? -HUNTER_NEUTRAL_INPUT_PITCH) + HUNTER_NEUTRAL_INPUT_PITCH, -0.75, 0.45);
+}
+
+function hunterAimYaw(state: PlayerState): number {
+  return state.aimYaw ?? state.yaw;
+}
 
 const POSE_CLIPS: Record<Pose, string> = {
   stand: "ChameleonMan|Pose_Straight",

@@ -83,7 +83,8 @@ export class InputController {
   snapshot(): InputPayload {
     if (this.paintMode) {
       this.jumpQueued = false;
-      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: this.yaw };
+      const aim = this.aim();
+      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: this.yaw, aimYaw: aim.yaw, pitch: aim.pitch };
     }
     const { forward, strafe, sprint } = this.movement();
     const jump = this.jumpQueued;
@@ -91,7 +92,8 @@ export class InputController {
     const climbDown = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     const climb = climbUp ? 1 : climbDown ? -1 : 0;
     this.jumpQueued = false;
-    return { sequence: ++this.sequence, forward, strafe, jump, sprint, climb, detach: false, yaw: this.yaw };
+    const aim = this.aim();
+    return { sequence: ++this.sequence, forward, strafe, jump, sprint, climb, detach: false, yaw: this.yaw, aimYaw: aim.yaw, pitch: aim.pitch };
   }
 
   movement(): { forward: number; strafe: number; sprint: boolean } {

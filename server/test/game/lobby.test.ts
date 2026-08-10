@@ -76,7 +76,7 @@ test("hunter shots use camera yaw without changing authoritative body facing", a
     hider.position = { x: 5, y: 0, z: 8 };
     hider.velocity = { x: 0, y: 0, z: 0 };
 
-    room.handleMessage(hunter.id, { type: "shoot", yaw: -Math.PI / 2, pitch: -0.22 });
+    room.handleMessage(hunter.id, { type: "shoot", yaw: -Math.PI / 2, pitch: -0.72 });
 
     assert.equal(hunter.yaw, 0.42);
     assert.equal(hunter.input.yaw, 0.42);
@@ -85,8 +85,33 @@ test("hunter shots use camera yaw without changing authoritative body facing", a
     const shot = await waitForShot(hunterSocket);
     assert.equal(shot.hider, "Camera Target");
     assert.ok(shot.end.x > shot.origin.x);
-    assert.ok(Math.abs(shot.end.z - shot.origin.z) < 0.001);
+    // The muzzle sits to the camera's right, so the barrel ray converges
+    // diagonally toward the camera-center aim line instead of staying parallel.
+    assert.ok(Math.abs(shot.end.z - 8) < Math.abs(shot.origin.z - 8));
     assert.equal(latestPlayer(hunterSocket, hunter.id)?.yaw, 0.42);
+  } finally {
+    room.destroy();
+  }
+});
+
+test("hunter barrel shots follow vertical camera aim", async () => {
+  const room = new GameRoom("AIM003");
+  try {
+    const hunterSocket = new TestSocket();
+    const hunter = room.addHuman(asWebSocket(hunterSocket), "Pitch Hunter");
+    await delay(60);
+    hunterSocket.sent.length = 0;
+
+    setRound(room, { phase: "hunting", endsAt: Date.now() + 10_000, round: 1 });
+    hunter.role = "hunter";
+    hunter.alive = true;
+    hunter.position = { x: 0, y: 2, z: 8 };
+
+    room.handleMessage(hunter.id, { type: "shoot", yaw: 0, pitch: 0.2 });
+
+    const shot = await waitForShot(hunterSocket);
+    assert.ok(shot.end.y > shot.origin.y);
+    assert.equal(latestPlayer(hunterSocket, hunter.id)?.aimPitch, 0.2);
   } finally {
     room.destroy();
   }

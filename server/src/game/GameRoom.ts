@@ -43,6 +43,10 @@ interface RoomPlayer extends PlayerState {
 const CLING_REATTACH_DELAY_MS = 280;
 const CLING_RELEASE_NUDGE = 0.08;
 const CLING_RELEASE_SPEED = 2.2;
+const HUNTER_MUZZLE_RIGHT = 0.3;
+const HUNTER_MUZZLE_VERTICAL = -0.31;
+const HUNTER_MUZZLE_FORWARD = 1.97;
+const HUNTER_CAMERA_FACE_OFFSET = 0.18;
 
 export class GameRoom {
   readonly id: string;
@@ -141,6 +145,8 @@ export class GameRoom {
       position: { x: spawn[0], y: spawn[1], z: spawn[2] },
       velocity: { x: 0, y: 0, z: 0 },
       yaw: 0,
+      aimYaw: 0,
+      aimPitch: -0.22,
       role: "hider",
       pose: "stand",
       color: "#f5f0df",
@@ -148,7 +154,7 @@ export class GameRoom {
       score: 0,
       tags: 0,
       whistlingUntil: 0,
-      input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: 0 },
+      input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: 0, aimYaw: 0, pitch: -0.22 },
       lastInputAt: Date.now(),
       lastShotAt: 0,
       lastWhistleAt: 0,
@@ -177,8 +183,12 @@ export class GameRoom {
       sprint: candidate.sprint === true,
       climb: clamp(climb, -1, 1),
       detach: player.input.detach || candidate.detach === true,
-      yaw: normalizeAngle(candidate.yaw)
+      yaw: normalizeAngle(candidate.yaw),
+      aimYaw: isFiniteNumber(candidate.aimYaw) ? normalizeAngle(candidate.aimYaw) : normalizeAngle(candidate.yaw),
+      pitch: isFiniteNumber(candidate.pitch) ? clamp(candidate.pitch, -0.85, 0.48) : player.input.pitch
     };
+    player.aimYaw = player.input.aimYaw;
+    player.aimPitch = player.input.pitch;
     player.yaw = player.input.yaw;
     player.lastInputAt = Date.now();
   }
@@ -401,22 +411,46 @@ export class GameRoom {
     ) return;
     hunter.lastShotAt = now;
     const aimYaw = normalizeAngle(requestedYaw);
+    hunter.aimYaw = aimYaw;
+    hunter.aimPitch = clamp(requestedPitch, -0.85, 0.48);
 
-    // The camera's normal third-person pitch is -0.22. Treat that as a level
-    // muzzle and retain a small amount of vertical aiming for jumps/ledges.
-    const pitch = clamp(requestedPitch + 0.22, -0.12, 0.12);
+    // Input pitch -0.22 is the neutral view. The first-person barrel converges
+    // on the camera's crosshair point, producing the expected diagonal tracer
+    // instead of firing a parallel ray from the center of the player.
+    const pitch = clamp(requestedPitch + 0.22, -0.75, 0.45);
     const horizontal = Math.cos(pitch);
-    const direction = {
+    const viewDirection = {
       x: -Math.sin(aimYaw) * horizontal,
       y: Math.sin(pitch),
       z: -Math.cos(aimYaw) * horizontal
     };
-    const origin = {
-      x: hunter.position.x,
-      y: hunter.position.y + 1.28 * GAME.hunterCameraScale,
-      z: hunter.position.z
+    const viewOrigin = {
+      x: hunter.position.x + viewDirection.x * HUNTER_CAMERA_FACE_OFFSET,
+      y: hunter.position.y + GAME.hunterEyeHeight + viewDirection.y * HUNTER_CAMERA_FACE_OFFSET,
+      z: hunter.position.z + viewDirection.z * HUNTER_CAMERA_FACE_OFFSET
     };
-    const blockedAt = firstWorldHit(origin, direction, GAME.shotgunRange);
+    const aimDistance = Math.max(1.5, firstWorldHit(viewOrigin, viewDirection, GAME.shotgunRange));
+    const aimPoint = {
+      x: viewOrigin.x + viewDirection.x * aimDistance,
+      y: viewOrigin.y + viewDirection.y * aimDistance,
+      z: viewOrigin.z + viewDirection.z * aimDistance
+    };
+    const rightX = Math.cos(aimYaw);
+    const rightZ = -Math.sin(aimYaw);
+    const upX = Math.sin(aimYaw) * Math.sin(pitch);
+    const upY = Math.cos(pitch);
+    const upZ = Math.cos(aimYaw) * Math.sin(pitch);
+    const origin = {
+      x: viewOrigin.x + rightX * HUNTER_MUZZLE_RIGHT + upX * HUNTER_MUZZLE_VERTICAL + viewDirection.x * HUNTER_MUZZLE_FORWARD,
+      y: viewOrigin.y + upY * HUNTER_MUZZLE_VERTICAL + viewDirection.y * HUNTER_MUZZLE_FORWARD,
+      z: viewOrigin.z + rightZ * HUNTER_MUZZLE_RIGHT + upZ * HUNTER_MUZZLE_VERTICAL + viewDirection.z * HUNTER_MUZZLE_FORWARD
+    };
+    const aimX = aimPoint.x - origin.x;
+    const aimY = aimPoint.y - origin.y;
+    const aimZ = aimPoint.z - origin.z;
+    const barrelDistance = Math.max(0.001, Math.hypot(aimX, aimY, aimZ));
+    const direction = { x: aimX / barrelDistance, y: aimY / barrelDistance, z: aimZ / barrelDistance };
+    const blockedAt = firstWorldHit(origin, direction, Math.min(GAME.shotgunRange, barrelDistance));
     let closest: RoomPlayer | undefined;
     let closestDistance = blockedAt;
     for (const target of this.players.values()) {

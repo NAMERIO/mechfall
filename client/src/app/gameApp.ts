@@ -426,7 +426,7 @@ function updateHud(snapshot: ServerSnapshot): void {
     : snapshot.round.phase === "waiting"
       ? isLobbyOwner ? "You control when the next round starts" : "The game owner controls the start"
       : self.role === "hunter"
-        ? canShoot ? "Mouse look - LMB fire - WASD move - wheel to zoom" : "Shotgun locked - Mouse look - WASD move - wheel to zoom"
+        ? canShoot ? "First person - Mouse aim - LMB fire - WASD move" : "Shotgun locked - Mouse look - WASD move"
         : self.role === "hider"
           ? "Mouse look - WASD move - F paint - R poses - 1 whistle - wheel to zoom"
           : "You rejoin when the next round begins";

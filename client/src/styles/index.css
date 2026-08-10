@@ -13,6 +13,304 @@
   --line: rgba(245, 240, 223, 0.18);
 }
 
+body.mapmaker-page {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #10191e;
+}
+
+body.mapmaker-page .mapmaker-shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 320px minmax(520px, 1fr) 360px;
+  color: var(--paper);
+  background: #10191e;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+}
+
+body.mapmaker-page .mapmaker-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, rgba(20, 31, 36, 0.98), rgba(13, 22, 26, 0.96));
+  border-right: 1px solid rgba(245, 240, 223, 0.16);
+  box-shadow: 18px 0 45px rgba(0, 0, 0, 0.22);
+}
+
+body.mapmaker-page .mapmaker-right {
+  border-right: 0;
+  border-left: 1px solid rgba(245, 240, 223, 0.16);
+  box-shadow: -18px 0 45px rgba(0, 0, 0, 0.22);
+}
+
+body.mapmaker-page .mapmaker-panel header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(245, 240, 223, 0.12);
+}
+
+body.mapmaker-page .mapmaker-panel header span,
+body.mapmaker-page .mapmaker-panel label {
+  color: #94a5a1;
+  font: 700 9px/1.2 "Chakra Petch", sans-serif;
+  letter-spacing: 0.15em;
+}
+
+body.mapmaker-page .mapmaker-panel h1 {
+  margin: 6px 0 8px;
+  color: var(--paper);
+  font: 700 38px/0.85 "Chakra Petch", sans-serif;
+  letter-spacing: -0.055em;
+  text-shadow: none;
+}
+
+body.mapmaker-page .mapmaker-panel p,
+body.mapmaker-page .mapmaker-panel small {
+  margin: 0;
+  color: #a7b5b1;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+body.mapmaker-page .mapmaker-panel header strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--acid);
+  font: 700 15px "Chakra Petch", sans-serif;
+  letter-spacing: 0.08em;
+}
+
+body.mapmaker-page .mapmaker-tools,
+body.mapmaker-page .mapmaker-world {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.mapmaker-page .mapmaker-world {
+  padding: 12px;
+  border: 1px solid rgba(245, 240, 223, 0.14);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+body.mapmaker-page .mapmaker-gizmo {
+  padding: 12px;
+  border: 1px solid rgba(245, 240, 223, 0.14);
+  background: rgba(244, 210, 79, 0.04);
+}
+
+body.mapmaker-page .mapmaker-gizmo div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+body.mapmaker-page .mapmaker-gizmo button.active {
+  border-color: var(--acid);
+  background: var(--acid);
+  color: var(--ink);
+}
+
+body.mapmaker-page .mapmaker-world small {
+  grid-column: 1 / -1;
+}
+
+body.mapmaker-page .mapmaker-import,
+body.mapmaker-page .mapmaker-test,
+body.mapmaker-page .mapmaker-export,
+body.mapmaker-page .mapmaker-list-wrap,
+body.mapmaker-page .mapmaker-panel section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+body.mapmaker-page .mapmaker-panel .mapmaker-tools,
+body.mapmaker-page .mapmaker-panel .mapmaker-world {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.mapmaker-page .mapmaker-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+body.mapmaker-page .mapmaker-fields label:first-child {
+  grid-column: 1 / -1;
+}
+
+body.mapmaker-page .mapmaker-panel button,
+body.mapmaker-page .mapmaker-panel input,
+body.mapmaker-page .mapmaker-panel select,
+body.mapmaker-page .mapmaker-panel textarea {
+  appearance: none;
+  border-radius: 0;
+  font: inherit;
+}
+
+body.mapmaker-page .mapmaker-panel button {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(245, 240, 223, 0.2);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--paper);
+  cursor: pointer;
+  font: 700 9px "Chakra Petch", sans-serif;
+  letter-spacing: 0.1em;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
+}
+
+body.mapmaker-page .mapmaker-panel button:hover {
+  border-color: var(--acid);
+  background: rgba(244, 210, 79, 0.12);
+  color: var(--acid);
+  transform: translateY(-1px);
+}
+
+body.mapmaker-page .mapmaker-fields input,
+body.mapmaker-page .mapmaker-fields select,
+body.mapmaker-page .mapmaker-world input,
+body.mapmaker-page .mapmaker-import input,
+body.mapmaker-page .mapmaker-panel textarea {
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid rgba(245, 240, 223, 0.18);
+  background: rgba(4, 10, 12, 0.55);
+  color: var(--paper);
+  outline: none;
+  font: 600 12px "Space Grotesk", system-ui, sans-serif;
+}
+
+body.mapmaker-page .mapmaker-fields input,
+body.mapmaker-page .mapmaker-fields select,
+body.mapmaker-page .mapmaker-world input {
+  height: 33px;
+  padding: 0 8px;
+}
+
+body.mapmaker-page .mapmaker-fields input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  accent-color: var(--acid);
+  appearance: auto;
+}
+
+body.mapmaker-page .mapmaker-world input[type="color"],
+body.mapmaker-page .mapmaker-fields input[type="color"] {
+  padding: 3px;
+}
+
+body.mapmaker-page .mapmaker-import input[type="file"] {
+  padding: 8px;
+  font-size: 11px;
+}
+
+body.mapmaker-page .mapmaker-panel textarea {
+  min-height: 92px;
+  padding: 10px;
+  resize: vertical;
+  font: 600 11px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+body.mapmaker-page .mapmaker-export textarea {
+  min-height: 210px;
+}
+
+body.mapmaker-page .mapmaker-export div {
+  display: grid;
+  grid-template-columns: 1fr 1.3fr 0.7fr;
+  gap: 7px;
+}
+
+body.mapmaker-page .mapmaker-box-list {
+  display: flex;
+  max-height: 240px;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+body.mapmaker-page .mapmaker-box-list button {
+  min-height: 50px;
+  padding: 8px 10px;
+  align-items: flex-start;
+  justify-content: center;
+  text-align: left;
+}
+
+body.mapmaker-page .mapmaker-box-list button.active {
+  border-color: var(--acid);
+  background: rgba(244, 210, 79, 0.15);
+}
+
+body.mapmaker-page .mapmaker-box-list strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--paper);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.mapmaker-page .mapmaker-box-list span {
+  color: #879895;
+  font-size: 10px;
+}
+
+body.mapmaker-page .mapmaker-view {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 42%, rgba(244, 210, 79, 0.06), transparent 38%), #0d171b;
+}
+
+body.mapmaker-page #mm-canvas-host {
+  position: absolute;
+  inset: 0;
+}
+
+body.mapmaker-page #mm-canvas-host canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+body.mapmaker-page .mapmaker-help {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  max-width: min(620px, calc(100% - 36px));
+  padding: 11px 14px;
+  border: 1px solid rgba(245, 240, 223, 0.18);
+  background: rgba(15, 24, 29, 0.78);
+  color: #afbbb8;
+  font-size: 12px;
+  line-height: 1.45;
+  backdrop-filter: blur(9px);
+  pointer-events: none;
+}
+
+body.mapmaker-page .mapmaker-help b {
+  color: var(--acid);
+}
+
+@media (max-width: 1100px) {
+  body.mapmaker-page .mapmaker-shell {
+    grid-template-columns: 290px minmax(420px, 1fr) 320px;
+  }
+}
+
 * { box-sizing: border-box; }
 html, body, #game { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 body { background: #151f24; }
@@ -32,6 +330,37 @@ button { color: inherit; }
 }
 canvas { display: block; cursor: default; }
 canvas.paint-cursor { cursor: none; }
+
+.mapmaker-shell { position: fixed; inset: 0; display: grid; grid-template-columns: 300px minmax(0, 1fr) 330px; background: #10191e; color: var(--paper); overflow: hidden; }
+.mapmaker-panel { display: flex; min-height: 0; flex-direction: column; gap: 13px; padding: 18px; background: rgba(15,24,29,.94); border-right: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.28); overflow-y: auto; }
+.mapmaker-right { border-right: 0; border-left: 1px solid var(--line); }
+.mapmaker-panel header span, .mapmaker-panel label { color: #8fa19e; font: 700 9px "Chakra Petch"; letter-spacing: .14em; }
+.mapmaker-panel h1 { margin: 4px 0 5px; font: 700 32px/.9 "Chakra Petch"; letter-spacing: -.04em; }
+.mapmaker-panel header p, .mapmaker-panel small { margin: 0; color: #9baaa6; font-size: 11px; line-height: 1.45; }
+.mapmaker-panel header strong { display: block; margin-top: 6px; color: var(--acid); font: 700 14px "Chakra Petch"; letter-spacing: .06em; }
+.mapmaker-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mapmaker-panel button { min-height: 36px; border: 1px solid rgba(245,240,223,.22); background: rgba(255,255,255,.04); color: var(--paper); cursor: pointer; font: 700 9px "Chakra Petch"; letter-spacing: .08em; transition: border-color .15s, color .15s, background .15s; }
+.mapmaker-panel button:hover { border-color: var(--acid); background: rgba(244,210,79,.11); color: var(--acid); }
+.mapmaker-import, .mapmaker-test, .mapmaker-export, .mapmaker-list-wrap, .mapmaker-panel section { display: flex; flex-direction: column; gap: 8px; }
+.mapmaker-import input { width: 100%; margin-top: 7px; color: #b9c7c3; font-size: 11px; }
+.mapmaker-fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.mapmaker-fields label:first-child { grid-column: 1 / -1; }
+.mapmaker-fields input, .mapmaker-fields select, .mapmaker-panel textarea { width: 100%; margin-top: 5px; border: 1px solid rgba(245,240,223,.18); background: rgba(5,10,12,.45); color: var(--paper); outline: none; font: 600 12px "Space Grotesk"; }
+.mapmaker-fields input, .mapmaker-fields select { height: 32px; padding: 0 8px; }
+.mapmaker-fields input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--acid); }
+.mapmaker-panel textarea { min-height: 92px; padding: 9px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.45; }
+.mapmaker-export textarea { min-height: 180px; }
+.mapmaker-export div { display: grid; grid-template-columns: 1fr 1fr .7fr; gap: 7px; }
+.mapmaker-box-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; padding-right: 3px; }
+.mapmaker-box-list button { display: flex; min-height: 48px; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; padding: 7px 9px; text-align: left; }
+.mapmaker-box-list button.active { border-color: var(--acid); background: rgba(244,210,79,.14); }
+.mapmaker-box-list strong { max-width: 100%; overflow: hidden; color: var(--paper); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.mapmaker-box-list span { color: #839390; font-size: 10px; }
+.mapmaker-view { position: relative; min-width: 0; min-height: 0; }
+#mm-canvas-host { position: absolute; inset: 0; }
+#mm-canvas-host canvas { width: 100%; height: 100%; }
+.mapmaker-help { position: absolute; left: 18px; bottom: 18px; max-width: min(560px, calc(100% - 36px)); padding: 10px 13px; border: 1px solid rgba(245,240,223,.18); background: rgba(15,24,29,.75); color: #aebbb8; font-size: 12px; backdrop-filter: blur(9px); pointer-events: none; }
+.mapmaker-help b { color: var(--acid); }
 
 .panel {
   background: rgba(20, 31, 36, 0.9);

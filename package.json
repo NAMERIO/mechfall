@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "concurrently -n server,client -c magenta,cyan \"pnpm --filter @mechfall/server dev\" \"pnpm --filter @mechfall/client dev\"",
+    "bots": "pnpm --filter @mechfall/bots start",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm --filter @mechfall/server test",

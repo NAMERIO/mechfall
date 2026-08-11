@@ -21,6 +21,28 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  bots:
+    dependencies:
+      '@mechfall/shared':
+        specifier: workspace:*
+        version: link:../shared
+      ws:
+        specifier: ^8.18.3
+        version: 8.21.3
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
+      tsx:
+        specifier: ^4.20.5
+        version: 4.23.11
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
   client:
     dependencies:
       '@mechfall/shared':

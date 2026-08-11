@@ -38,7 +38,15 @@ pnpm --filter @mechfall/client dev
 pnpm --filter @mechfall/server dev
 ```
 
-Games contain human players only. A game needs at least two connected players; the first player is the owner and chooses when to start. If the owner leaves, ownership transfers to the next connected player. Open another browser tab and enter the same six-character game ID to test multiplayer locally.
+A game needs at least two connected players; the first player is the owner and chooses when to start. If the owner leaves, ownership transfers to the next connected player. Open another browser tab and enter the same six-character game ID to test multiplayer locally.
+
+Headless gameplay bots are a separate workspace package. They join the fullest open lobby and wait for its owner by default:
+
+```sh
+pnpm bots -- --count 3
+```
+
+They roam the lobby, navigate the bunker and its doors, pick hiding places, camouflage themselves against nearby surfaces, and hunt when assigned that role. See [bots/README.md](bots/README.md) for lobby targeting, auto-start, and server options.
 
 Leave the **GAME ID** field empty to find a public game. Enter an existing ID to join that exact game, or share the generated `?gameId=ABC123` URL. Clicking the game ID in the HUD copies it.
 

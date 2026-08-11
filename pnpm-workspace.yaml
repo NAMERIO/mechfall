@@ -1,4 +1,5 @@
 packages:
+  - bots
   - client
   - server
   - shared

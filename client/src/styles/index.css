@@ -320,6 +320,11 @@ body.mapmaker-page .mapmaker-box-list .mapmaker-asset-item {
   background: rgba(87, 185, 169, 0.08);
 }
 
+body.mapmaker-page .mapmaker-box-list .mapmaker-player-item {
+  border-color: rgba(128, 103, 168, 0.72);
+  background: linear-gradient(90deg, rgba(128, 103, 168, 0.18), rgba(87, 185, 169, 0.05));
+}
+
 body.mapmaker-page .mapmaker-box-list .mapmaker-hull-item {
   border-color: rgba(87, 185, 169, 0.72);
   background: linear-gradient(90deg, rgba(87, 185, 169, 0.16), rgba(87, 185, 169, 0.04));

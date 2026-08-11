@@ -3,7 +3,9 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
+import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
+  GAME,
   WORLD_BORDER_COLOR,
   WORLD_BOXES,
   WORLD_FLOOR_COLOR,
@@ -35,6 +37,16 @@ type ImportedAsset = {
   id: string;
   model: THREE.Group;
   file: File;
+  meshes: THREE.Mesh[];
+};
+type PlayerPreviewRole = "hider" | "seeker";
+type PlayerPreview = {
+  id: string;
+  role: PlayerPreviewRole;
+  color: string;
+  root: THREE.Group;
+  meshes: THREE.Mesh[];
+  material: THREE.MeshStandardMaterial;
 };
 type EditableHull = {
   id: string;
@@ -100,6 +112,10 @@ const MAX_MODEL_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_EXACT_COLLISION_TRIANGLES = 12_000;
 const MAX_OPTIMIZED_COLLISION_TRIANGLES = 6_000;
 const MAX_COLLISION_CLUSTER_PASSES = 8;
+const MAP_MAKER_PIXEL_RATIO_CAP = 1.2;
+const MAP_MAKER_IDLE_FRAME_INTERVAL = 1_000 / 30;
+const PLAYER_PREVIEW_HEIGHT = 2.45;
+const PLAYER_PREVIEW_STAND_CLIP = "ChameleonMan|Pose_Straight";
 
 document.body.className = "mapmaker-page";
 document.body.innerHTML = `
@@ -161,6 +177,21 @@ document.body.innerHTML = `
         <button id="mm-test-toggle" type="button">TEST COLLISION: OFF</button>
         <small>Test on: WASD moves relative to the camera, E flies up, Q flies down. Red means collision is blocking only that direction.</small>
         <small>Test off: WASD and Q/E move the selected map item.</small>
+      </section>
+      <section class="mapmaker-player-tool">
+        <label>PLAYER PREVIEWS</label>
+        <div class="mapmaker-tools">
+          <button id="mm-add-hider" type="button">ADD HIDER</button>
+          <button id="mm-add-seeker" type="button">ADD SEEKER</button>
+        </div>
+        <div class="mapmaker-fields">
+          <label>PAINT COLOR <input id="mm-player-color" type="color" value="#57b9a9" disabled /></label>
+          <label>X <input id="mm-player-x" type="number" step="0.1" disabled /></label>
+          <label>Y <input id="mm-player-y" type="number" step="0.1" disabled /></label>
+          <label>Z <input id="mm-player-z" type="number" step="0.1" disabled /></label>
+        </div>
+        <button id="mm-delete-player" type="button" disabled>DELETE PLAYER PREVIEW</button>
+        <small>Editor-only staging actors. Move them with the gizmo or WASD/Q/E; they are never exported with the map.</small>
       </section>
       <section class="mapmaker-publish">
         <label>MAP NAME <input id="mm-map-name" maxlength="60" value="${escapeHtml(WORLD_NAME)}" /></label>
@@ -240,16 +271,22 @@ const worldInputs = {
 const scaleInputs = {
   uniform: element<HTMLInputElement>("#mm-uniform-scale")
 };
+const playerPreviewInputs = {
+  color: element<HTMLInputElement>("#mm-player-color"),
+  x: element<HTMLInputElement>("#mm-player-x"),
+  y: element<HTMLInputElement>("#mm-player-y"),
+  z: element<HTMLInputElement>("#mm-player-z"),
+  remove: element<HTMLButtonElement>("#mm-delete-player")
+};
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#10191e");
-scene.fog = new THREE.FogExp2("#10191e", 0.018);
 
 const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 180);
 camera.position.set(20, 18, 24);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.7));
-renderer.shadowMap.enabled = true;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAP_MAKER_PIXEL_RATIO_CAP));
+renderer.shadowMap.enabled = false;
 host.append(renderer.domElement);
 
 const orbit = new OrbitControls(camera, renderer.domElement);
@@ -261,7 +298,7 @@ let transformMode: TransformMode = "translate";
 transform.setMode("translate");
 transform.addEventListener("dragging-changed", (event) => {
   orbit.enabled = !event.value;
-  if (event.value) checkpointUndo();
+  if (event.value && !playerPreviewForRoot(selectedAsset)) checkpointUndo();
 });
 transform.addEventListener("objectChange", () => {
   if (selected) {
@@ -288,6 +325,15 @@ transform.addEventListener("objectChange", () => {
     return;
   }
   if (selectedAsset) {
+    const playerPreview = playerPreviewForRoot(selectedAsset);
+    if (playerPreview) {
+      if (transformMode === "translate") snapAssetToFloor(selectedAsset);
+      if (transformMode === "rotate" && !isIgnoringFloorSnap()) snapObjectRotation(selectedAsset);
+      selectedTitle.textContent = `${playerPreview.role.toUpperCase()}: ${playerPreview.id}`;
+      fillPlayerPreviewFields(playerPreview);
+      renderList();
+      return;
+    }
     if (transformMode === "translate") snapAssetToFloor(selectedAsset);
     if (transformMode === "rotate" && !isIgnoringFloorSnap()) snapObjectRotation(selectedAsset);
     if (transformMode === "scale") applyUniformAssetScale(selectedAsset);
@@ -300,7 +346,7 @@ scene.add(transform.getHelper());
 scene.add(new THREE.HemisphereLight("#fff3d2", "#41515a", 2.2));
 const sun = new THREE.DirectionalLight("#fff4cf", 3.2);
 sun.position.set(-12, 24, 18);
-sun.castShadow = true;
+sun.castShadow = false;
 scene.add(sun);
 
 let worldSize = WORLD_SIZE;
@@ -309,7 +355,7 @@ let borderColor = DEFAULT_BORDER_COLOR;
 
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(worldSize, worldSize), new THREE.MeshStandardMaterial({ color: floorColor, roughness: 0.92 }));
 floor.rotation.x = -Math.PI / 2;
-floor.receiveShadow = true;
+floor.receiveShadow = false;
 floor.visible = WORLD_FLOOR_VISIBLE;
 scene.add(floor);
 
@@ -323,9 +369,13 @@ let hulls: EditableHull[] = [];
 let selectedHull: EditableHull | undefined;
 let selectedAsset: THREE.Group | undefined;
 let importedAssets: ImportedAsset[] = [];
+let playerPreviews: PlayerPreview[] = [];
+let playerPreviewSequence = 0;
+let playerPreviewTemplatePromise: Promise<{ scene: THREE.Group; animations: THREE.AnimationClip[] }> | undefined;
 let testMode = false;
 let collisionEditMode = false;
 let restoringUndo = false;
+let lastEditorRenderAt = 0;
 const undoStack: EditorSnapshot[] = [];
 const keys = new Set<string>();
 const testPlayer = makeTestPlayer();
@@ -370,7 +420,7 @@ for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mm-yaw-
   button.addEventListener("click", () => stepSelectedYaw(Number(button.dataset.mmYawStep ?? 0)));
 }
 scaleInputs.uniform.addEventListener("change", () => {
-  if (!selectedAsset) return;
+  if (!selectedAsset || playerPreviewForRoot(selectedAsset)) return;
   if (scaleInputs.uniform.checked) {
     checkpointUndo();
     applyUniformAssetScale(selectedAsset, true);
@@ -408,6 +458,13 @@ element<HTMLButtonElement>("#mm-test-toggle").addEventListener("click", () => {
   element<HTMLButtonElement>("#mm-test-toggle").textContent = `TEST COLLISION: ${testMode ? "ON" : "OFF"}`;
   testPlayer.visible = testMode;
 });
+element<HTMLButtonElement>("#mm-add-hider").addEventListener("click", () => void spawnPlayerPreview("hider"));
+element<HTMLButtonElement>("#mm-add-seeker").addEventListener("click", () => void spawnPlayerPreview("seeker"));
+playerPreviewInputs.color.addEventListener("input", applyPlayerPreviewFields);
+playerPreviewInputs.x.addEventListener("input", applyPlayerPreviewFields);
+playerPreviewInputs.y.addEventListener("input", applyPlayerPreviewFields);
+playerPreviewInputs.z.addEventListener("input", applyPlayerPreviewFields);
+playerPreviewInputs.remove.addEventListener("click", deleteSelectedPlayerPreview);
 element<HTMLButtonElement>("#mm-add-to-game").addEventListener("click", () => void addMapToGame());
 element<HTMLInputElement>("#mm-model-file").addEventListener("change", (event) => {
   const input = event.currentTarget as HTMLInputElement;
@@ -435,6 +492,12 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
   const pointer = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1));
   const raycaster = new THREE.Raycaster();
   raycaster.setFromCamera(pointer, camera);
+  const previewHit = raycaster.intersectObjects(playerPreviews.flatMap((preview) => preview.meshes), false)[0];
+  if (previewHit) {
+    const preview = playerPreviews.find((candidate) => candidate.meshes.includes(previewHit.object as THREE.Mesh));
+    if (preview) selectAsset(preview.root);
+    return;
+  }
   if (collisionEditMode) {
     const hullHit = raycaster.intersectObjects(hulls.map((hull) => hull.mesh), false)[0];
     if (hullHit) {
@@ -447,10 +510,10 @@ renderer.domElement.addEventListener("pointerdown", (event) => {
       return;
     }
   } else {
-    const modelMeshes = importedAssets.flatMap((asset) => getModelMeshes(asset.model));
+    const modelMeshes = importedAssets.flatMap((asset) => asset.meshes);
     const assetHit = raycaster.intersectObjects(modelMeshes, false)[0];
     if (assetHit) {
-      const asset = importedAssets.find((candidate) => getModelMeshes(candidate.model).includes(assetHit.object as THREE.Mesh));
+      const asset = importedAssets.find((candidate) => candidate.meshes.includes(assetHit.object as THREE.Mesh));
       if (asset) selectAsset(asset.model);
       return;
     }
@@ -471,7 +534,7 @@ window.addEventListener("keydown", (event) => {
   }
   keys.add(event.code);
   if (!event.repeat && ["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE"].includes(event.code)
-      && !isTypingInForm() && (selected || selectedHull || selectedAsset)) checkpointUndo();
+      && !isTypingInForm() && (selected || selectedHull || (selectedAsset && !playerPreviewForRoot(selectedAsset)))) checkpointUndo();
   if ((event.code === "Delete" || event.code === "Backspace") && !isTypingInForm()) {
     event.preventDefault();
     deleteSelected();
@@ -501,6 +564,133 @@ function importedAssetForModel(model: THREE.Object3D | undefined): ImportedAsset
   return model ? importedAssets.find((asset) => asset.model === model) : undefined;
 }
 
+function playerPreviewForRoot(root: THREE.Object3D | undefined): PlayerPreview | undefined {
+  return root ? playerPreviews.find((preview) => preview.root === root) : undefined;
+}
+
+async function spawnPlayerPreview(role: PlayerPreviewRole): Promise<void> {
+  const addButton = element<HTMLButtonElement>(role === "seeker" ? "#mm-add-seeker" : "#mm-add-hider");
+  addButton.disabled = true;
+  status.textContent = `Loading ${role} preview...`;
+  try {
+    playerPreviewTemplatePromise ??= new GLTFLoader().loadAsync("/models/chameleon-man-pro.glb?v=4")
+      .then((gltf) => ({ scene: gltf.scene, animations: gltf.animations }));
+    const template = await playerPreviewTemplatePromise;
+    const visual = cloneSkeleton(template.scene);
+    visual.rotation.y = Math.PI;
+    const standingClip = template.animations.find((clip) => clip.name === PLAYER_PREVIEW_STAND_CLIP);
+    if (standingClip) {
+      const mixer = new THREE.AnimationMixer(visual);
+      mixer.clipAction(standingClip).reset().play();
+      mixer.update(0);
+    }
+    visual.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(visual, true);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const scale = size.y > 0 ? PLAYER_PREVIEW_HEIGHT / size.y : 1;
+    visual.scale.setScalar(scale);
+    visual.position.set(-center.x * scale, -bounds.min.y * scale, -center.z * scale);
+
+    const color = role === "seeker" ? "#ff5d52" : "#57b9a9";
+    const material = new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 });
+    const meshes: THREE.Mesh[] = [];
+    visual.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.material = material;
+      child.castShadow = false;
+      child.receiveShadow = false;
+      meshes.push(child);
+    });
+    if (meshes.length === 0) throw new Error("the character model contains no visible meshes");
+
+    const root = new THREE.Group();
+    const id = `${role}-${++playerPreviewSequence}`;
+    root.name = id;
+    root.add(visual);
+    root.position.set(orbit.target.x, 0, orbit.target.z);
+    if (role === "seeker") {
+      root.scale.setScalar(GAME.hunterVisualScale);
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.62, 0.055, 8, 24),
+        new THREE.MeshBasicMaterial({ color: "#ff594f" })
+      );
+      ring.userData.isPlayerPreviewGeometry = true;
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 2.68;
+      root.add(ring);
+      meshes.push(ring);
+    }
+    const preview: PlayerPreview = { id, role, color, root, meshes, material };
+    playerPreviews.push(preview);
+    scene.add(root);
+    selectAsset(root);
+    status.textContent = `Added ${role} preview at the camera target. Move it with the gizmo or WASD/Q/E.`;
+  } catch (error) {
+    status.textContent = `Could not add ${role}: ${error instanceof Error ? error.message : String(error)}`;
+  } finally {
+    addButton.disabled = false;
+  }
+}
+
+function fillPlayerPreviewFields(preview: PlayerPreview | undefined): void {
+  for (const input of [playerPreviewInputs.color, playerPreviewInputs.x, playerPreviewInputs.y, playerPreviewInputs.z]) {
+    input.disabled = !preview;
+  }
+  playerPreviewInputs.remove.disabled = !preview;
+  if (!preview) return;
+  playerPreviewInputs.color.value = preview.color;
+  playerPreviewInputs.x.value = formatNumber(preview.root.position.x);
+  playerPreviewInputs.y.value = formatNumber(preview.root.position.y);
+  playerPreviewInputs.z.value = formatNumber(preview.root.position.z);
+}
+
+function applyPlayerPreviewFields(): void {
+  const preview = playerPreviewForRoot(selectedAsset);
+  if (!preview) return;
+  preview.color = playerPreviewInputs.color.value || preview.color;
+  preview.material.color.set(preview.color);
+  preview.root.position.set(
+    numberInput(playerPreviewInputs.x, preview.root.position.x),
+    numberInput(playerPreviewInputs.y, preview.root.position.y),
+    numberInput(playerPreviewInputs.z, preview.root.position.z)
+  );
+  preview.root.updateMatrixWorld(true);
+  selectedTitle.textContent = `${preview.role.toUpperCase()}: ${preview.id}`;
+  renderList();
+}
+
+function deleteSelectedPlayerPreview(): void {
+  const preview = playerPreviewForRoot(selectedAsset);
+  if (preview) removePlayerPreview(preview);
+}
+
+function removePlayerPreview(preview: PlayerPreview): void {
+  const wasSelected = selectedAsset === preview.root;
+  if (wasSelected) {
+    selectedAsset = undefined;
+    transform.detach();
+  }
+  scene.remove(preview.root);
+  const materials = new Set<THREE.Material>();
+  preview.root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    if (child.userData.isPlayerPreviewGeometry) child.geometry.dispose();
+    for (const material of Array.isArray(child.material) ? child.material : [child.material]) materials.add(material);
+  });
+  for (const material of materials) material.dispose();
+  playerPreviews = playerPreviews.filter((candidate) => candidate !== preview);
+  if (wasSelected) {
+    const next = playerPreviews.at(-1);
+    if (next) selectAsset(next.root);
+    else if (importedAssets[0]) selectAsset(importedAssets[0].model);
+    else selectBox(undefined);
+  } else {
+    renderList();
+  }
+  status.textContent = `Removed ${preview.id}.`;
+}
+
 function linkedAssetForHull(hull: EditableHull | undefined): ImportedAsset | undefined {
   return hull?.linkedAssetId ? importedAssets.find((asset) => asset.id === hull.linkedAssetId) : undefined;
 }
@@ -512,7 +702,8 @@ function checkpointUndo(): void {
 }
 
 function captureEditorSnapshot(): EditorSnapshot {
-  const selectedType = selected ? "box" : selectedHull ? "hull" : selectedAsset ? "asset" : undefined;
+  const selectedImportedAsset = importedAssetForModel(selectedAsset);
+  const selectedType = selected ? "box" : selectedHull ? "hull" : selectedImportedAsset ? "asset" : undefined;
   return {
     worldSize,
     floorColor,
@@ -526,7 +717,7 @@ function captureEditorSnapshot(): EditorSnapshot {
     })),
     assets: importedAssets.map((asset) => ({ asset, transform: assetToExport(asset.model) })),
     selectedType,
-    selectedId: selected?.id ?? selectedHull?.id ?? importedAssetForModel(selectedAsset)?.id
+    selectedId: selected?.id ?? selectedHull?.id ?? selectedImportedAsset?.id
   };
 }
 
@@ -588,6 +779,10 @@ function setTransformMode(mode: TransformMode): void {
   if (mode === "rotate" && selected) {
     mode = "translate";
     status.textContent = "Collision boxes are axis-aligned. Use MOVE or SCALE to adjust this part.";
+  }
+  if (mode === "scale" && selectedAsset && playerPreviewForRoot(selectedAsset)) {
+    mode = "translate";
+    status.textContent = "Player preview scale follows the real hider/seeker size. Use MOVE or ROTATE.";
   }
   transformMode = mode;
   transform.setMode(mode);
@@ -728,12 +923,13 @@ function syncBoxMesh(box: EditableBox): void {
 
 function syncHullMesh(hull: EditableHull): void {
   hull.mesh.name = hull.id;
+  hull.mesh.visible = collisionEditMode;
   const material = hull.mesh.material as THREE.MeshStandardMaterial;
   material.color.set(hull.color);
-  material.opacity = collisionEditMode ? (hull.solid ? 0.42 : 0.2) : (hull.solid ? 0.1 : 0.05);
+  material.opacity = hull.solid ? 0.42 : 0.2;
   const edgeMaterial = hull.edges.material as THREE.LineBasicMaterial;
   edgeMaterial.color.set(selectedHull === hull ? "#f4d24f" : MODEL_COLLISION_COLOR);
-  edgeMaterial.opacity = collisionEditMode ? (selectedHull === hull ? 1 : 0.78) : 0.16;
+  edgeMaterial.opacity = selectedHull === hull ? 1 : 0.78;
 }
 
 function isIgnoringFloorSnap(): boolean {
@@ -749,7 +945,7 @@ function getRotatableTarget(): THREE.Object3D | undefined {
 }
 
 function getScalableTarget(): THREE.Object3D | undefined {
-  return selectedAsset;
+  return selectedAsset && !playerPreviewForRoot(selectedAsset) ? selectedAsset : undefined;
 }
 
 function stepSelectedAssetScale(direction: number): void {
@@ -965,6 +1161,7 @@ function selectBox(box: EditableBox | undefined): void {
   if (box) transform.attach(box.mesh);
   for (const hull of hulls) syncHullMesh(hull);
   fillFields(box, undefined);
+  fillPlayerPreviewFields(undefined);
   renderList();
 }
 
@@ -982,6 +1179,7 @@ function selectHull(hull: EditableHull | undefined): void {
   for (const item of hulls) syncHullMesh(item);
   if (hull) transform.attach(hull.mesh);
   fillFields(undefined, hull);
+  fillPlayerPreviewFields(undefined);
   renderList();
 }
 
@@ -1013,17 +1211,25 @@ function selectAsset(asset: THREE.Group | undefined): void {
   if (!asset) {
     transform.detach();
     fillFields(undefined, undefined);
+    fillPlayerPreviewFields(undefined);
     renderList();
     return;
   }
+  const playerPreview = playerPreviewForRoot(asset);
+  if (playerPreview && transformMode === "scale") setTransformMode("translate");
   asset.userData.modelCollisionPosition ??= asset.position.clone();
   setUniformScaleReference(asset);
   transform.detach();
   for (const item of boxes) syncBoxMesh(item);
   transform.attach(asset);
   fillFields(undefined, undefined);
-  selectedTitle.textContent = `ASSET: ${asset.name || "MODEL"}`;
-  status.textContent = "Asset selected. It snaps to the floor when close. Hold Shift while dragging to ignore snap.";
+  fillPlayerPreviewFields(playerPreview);
+  selectedTitle.textContent = playerPreview
+    ? `${playerPreview.role.toUpperCase()}: ${playerPreview.id}`
+    : `ASSET: ${asset.name || "MODEL"}`;
+  status.textContent = playerPreview
+    ? `${playerPreview.role === "seeker" ? "Seeker" : "Hider"} preview selected. Move it anywhere and choose its paint color.`
+    : "Asset selected. It snaps to the floor when close. Hold Shift while dragging to ignore snap.";
   renderList();
 }
 
@@ -1102,6 +1308,24 @@ function applyFieldsToSelected(): void {
 
 function renderList(): void {
   boxList.innerHTML = "";
+  for (const preview of playerPreviews) {
+    const row = document.createElement("div");
+    row.className = "mapmaker-box-row";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = selectedAsset === preview.root ? "active mapmaker-player-item" : "mapmaker-player-item";
+    button.innerHTML = `<strong>${escapeHtml(preview.id)}</strong><span>${preview.role.toUpperCase()} PREVIEW Â· ${preview.color.toUpperCase()}</span>`;
+    button.addEventListener("click", () => selectAsset(preview.root));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "mapmaker-box-remove";
+    remove.title = `Remove ${preview.id}`;
+    remove.setAttribute("aria-label", `Remove ${preview.id}`);
+    remove.textContent = "Ã—";
+    remove.addEventListener("click", () => removePlayerPreview(preview));
+    row.append(button, remove);
+    boxList.append(row);
+  }
   for (const asset of importedAssets) {
     const assetButton = document.createElement("button");
     assetButton.type = "button";
@@ -1166,6 +1390,11 @@ function renderList(): void {
 
 function deleteSelected(): void {
   if (!selectedAsset && !selectedHull && !selected) return;
+  const playerPreview = playerPreviewForRoot(selectedAsset);
+  if (playerPreview) {
+    removePlayerPreview(playerPreview);
+    return;
+  }
   checkpointUndo();
   if (selectedAsset) {
     const asset = importedAssetForModel(selectedAsset);
@@ -1269,7 +1498,8 @@ async function importModel(
     asset = {
       id: options.id ?? uniqueAssetId(file.name.replace(/\.[^.]+$/, "")),
       model: candidate,
-      file
+      file,
+      meshes: getModelMeshes(candidate)
     };
     importedAssets.push(asset);
     scene.add(candidate);
@@ -1360,16 +1590,14 @@ function normalizeImportedModel(model: THREE.Group, name: string): THREE.Group {
   root.scale.setScalar(scale);
   root.userData.defaultUniformScale = scale;
   root.userData.uniformScaleReference = scale;
-  let meshCount = 0;
-  root.traverse((child) => {
-    if (child instanceof THREE.Mesh) meshCount += 1;
-  });
-  const castModelShadows = meshCount <= 250;
   root.traverse((child) => {
     if (child instanceof THREE.Mesh) {
-      child.castShadow = castModelShadows;
-      child.receiveShadow = true;
+      child.castShadow = false;
+      child.receiveShadow = false;
     }
+    if (child === root) return;
+    child.updateMatrix();
+    child.matrixAutoUpdate = false;
   });
   return root;
 }
@@ -1850,6 +2078,12 @@ function moveSelectedItem(dt: number): void {
     renderList();
   } else if (selectedAsset) {
     if (transformMode === "translate") snapAssetToFloor(selectedAsset);
+    const playerPreview = playerPreviewForRoot(selectedAsset);
+    if (playerPreview) {
+      selectedTitle.textContent = `${playerPreview.role.toUpperCase()}: ${playerPreview.id}`;
+      fillPlayerPreviewFields(playerPreview);
+      return;
+    }
     selectedTitle.textContent = `ASSET: ${selectedAsset.name || "MODEL"}`;
   }
   exportJson();
@@ -1944,13 +2178,19 @@ function pointInsideExpandedPolygon(x: number, z: number, points: readonly (read
   return true;
 }
 
-function animate(): void {
+function animate(now = performance.now()): void {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, 1 / 60);
   moveSelectedItem(dt);
   moveTestPlayer(dt);
-  orbit.update();
+  const orbitChanged = orbit.update();
+  const activelyEditing = orbitChanged
+    || keys.size > 0
+    || testMode
+    || Boolean((transform as unknown as { dragging?: boolean }).dragging);
+  if (!activelyEditing && now - lastEditorRenderAt < MAP_MAKER_IDLE_FRAME_INTERVAL) return;
   renderer.render(scene, camera);
+  lastEditorRenderAt = now;
 }
 
 function resize(): void {

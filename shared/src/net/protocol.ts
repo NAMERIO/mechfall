@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 17;
 export const MAX_GAME_PACKET_BYTES = 16_384;
 export const MAX_PAINT_STROKES_PER_PACKET = 32;
 
@@ -89,6 +89,8 @@ export interface PlayerState {
   position: Vec3;
   velocity: Vec3;
   yaw: number;
+  /** Visual quarter-turn roll selected in the paint studio. */
+  bodyRoll?: number;
   /** Gun/camera yaw can differ from body yaw while free-looking. */
   aimYaw?: number;
   /** Current look pitch. Optional while older snapshots/tests migrate. */
@@ -142,6 +144,7 @@ export interface InputPayload {
   sprint: boolean;
   climb?: number;
   detach?: boolean;
+  positionLocked?: boolean;
   yaw: number;
   aimYaw?: number;
   pitch?: number;
@@ -155,6 +158,7 @@ export type ClientMessage =
   | { type: "clearPaint" }
   | { type: "undoPaint"; actionId: string }
   | { type: "redoPaint"; actionId: string }
+  | { type: "paintRotation"; roll: number }
   | { type: "pose"; pose: Pose }
   | { type: "shoot"; yaw: number; pitch: number }
   | { type: "startGame" }

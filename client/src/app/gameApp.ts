@@ -67,6 +67,9 @@ const brushCursor = element<HTMLElement>("#brush-cursor");
 const brushSizeInput = element<HTMLInputElement>("#brush-size");
 const undoPaintButton = element<HTMLButtonElement>("#undo-paint-button");
 const redoPaintButton = element<HTMLButtonElement>("#redo-paint-button");
+const positionLockButton = element<HTMLButtonElement>("#position-lock-button");
+const rotatePaintLeftButton = element<HTMLButtonElement>("#rotate-paint-left-button");
+const rotatePaintRightButton = element<HTMLButtonElement>("#rotate-paint-right-button");
 const donePaintButton = element<HTMLButtonElement>("#done-paint-button");
 const whistleAudio = new Audio("/audio/meccha-chameleon-whistle.mp3");
 whistleAudio.preload = "auto";
@@ -85,6 +88,7 @@ let phaseTimeout = 0;
 let inputTimer = 0;
 let toastTimeout = 0;
 let paintMode = false;
+let positionLocked = false;
 let colorPicking = false;
 let poseMenuOpen = false;
 let posePage = 0;
@@ -152,6 +156,9 @@ whistleButton.addEventListener("click", whistle);
 donePaintButton.addEventListener("click", togglePaintMode);
 undoPaintButton.addEventListener("click", undoPaint);
 redoPaintButton.addEventListener("click", redoPaint);
+positionLockButton.addEventListener("click", togglePositionLock);
+rotatePaintLeftButton.addEventListener("click", () => rotatePaintBody(-1));
+rotatePaintRightButton.addEventListener("click", () => rotatePaintBody(1));
 brushSizeInput.addEventListener("input", () => setBrushSize(Number(brushSizeInput.value) / 100));
 for (const swatch of document.querySelectorAll<HTMLButtonElement>("[data-paint-color]")) {
   swatch.addEventListener("click", () => selectPaintColor(swatch.dataset.paintColor ?? paintColor));
@@ -177,7 +184,7 @@ input.onAction = () => {
     const now = performance.now();
     if (now - lastLocalShotAt < GAME.shotgunCooldownMs) return;
     lastLocalShotAt = now;
-    connection?.send({ type: "shoot", ...input.aim() });
+    connection?.send({ type: "shoot", ...input.bodyAim() });
     world.flashShot();
     playShotSound();
   }
@@ -224,7 +231,7 @@ world.canvas.addEventListener("wheel", (event) => {
   if (paintMode && event.ctrlKey) {
     setBrushSize(brushSize + (event.deltaY > 0 ? -0.01 : 0.01));
   } else {
-    world.zoomCamera(event.deltaY);
+    world.zoomCamera(event.deltaY, event.clientX, event.clientY);
   }
 }, { passive: false });
 
@@ -422,24 +429,24 @@ function updateHud(snapshot: ServerSnapshot): void {
   roleIcon.textContent = isLobbyOwner ? "★" : self.role === "hunter" ? "⌖" : self.role === "hider" ? "◈" : "◎";
   paintPanel.classList.toggle("hidden", self.role !== "hider");
   roleTip.textContent = self.cling
-    ? "Attached - Mouse look - Space up - Shift down - A/D sideways - S/away to leave"
+    ? "Attached - RMB turns body - LMB drag free-looks - A/D slides sideways"
     : snapshot.round.phase === "waiting"
       ? isLobbyOwner ? "You control when the next round starts" : "The game owner controls the start"
       : self.role === "hunter"
-        ? canShoot ? "First person - Mouse aim - LMB fire - WASD move" : "Shotgun locked - Mouse look - WASD move"
+        ? canShoot ? "RMB turns body - LMB click fires / drag free-looks - WASD move" : "Shotgun locked - RMB turns body - LMB drag free-looks"
         : self.role === "hider"
-          ? "Mouse look - WASD move - F paint - R poses - 1 whistle - wheel to zoom"
+          ? "RMB turns body - LMB drag free-looks - WASD move - F paint - R poses"
           : "You rejoin when the next round begins";
   actionHint.textContent = self.cling
-    ? "MOUSE LOOK - SPACE UP - SHIFT DOWN - A/D SIDEWAYS - S/AWAY RELEASE"
+    ? "RMB TURN BODY - LMB DRAG FREE LOOK - A/D SLIDE - SPACE/SHIFT CLIMB"
     : snapshot.round.phase === "waiting"
       ? isLobbyOwner ? "START WHEN EVERYONE IS READY" : "WAITING FOR GAME OWNER"
       : canShoot
-        ? "MOUSE LOOK - LMB FIRE - WASD MOVE - WHEEL ZOOM"
+        ? "RMB AIM - LMB CLICK FIRE / DRAG FREE LOOK - WASD MOVE"
         : self.role === "hunter"
-          ? "SHOTGUN LOCKED - MOUSE LOOK - WASD MOVE - WHEEL ZOOM"
+          ? "SHOTGUN LOCKED - RMB TURN BODY - LMB DRAG FREE LOOK"
           : self.role === "hider"
-            ? "MOUSE LOOK - WASD MOVE - F PAINT - R POSES - 1 WHISTLE"
+            ? "RMB TURN BODY - LMB DRAG FREE LOOK - WASD MOVE - F PAINT"
             : "SPECTATING - WHEEL ZOOM";
   paintSwatch.style.backgroundColor = paintColor;
   paintHex.textContent = paintColor.toUpperCase();
@@ -625,6 +632,25 @@ function samplePaintColor(clientX: number, clientY: number): void {
 
 function togglePaintMode(): void {
   setPaintMode(!paintMode);
+}
+
+function rotatePaintBody(direction: -1 | 1): void {
+  const roll = world.rotatePaintBody(direction);
+  if (roll !== undefined) connection?.send({ type: "paintRotation", roll });
+}
+
+function togglePositionLock(): void {
+  setPositionLock(!positionLocked);
+}
+
+function setPositionLock(locked: boolean, announce = true): void {
+  positionLocked = locked;
+  input.setPositionLocked(locked);
+  positionLockButton.classList.toggle("active", locked);
+  positionLockButton.setAttribute("aria-pressed", String(locked));
+  positionLockButton.setAttribute("aria-label", locked ? "Unlock player position" : "Lock player position");
+  positionLockButton.title = locked ? "Unlock player movement" : "Lock your player in place";
+  if (announce) showToast(locked ? "POSITION LOCKED · FREE LOOK ONLY" : "MOVEMENT UNLOCKED");
 }
 
 function setPaintMode(active: boolean): void {

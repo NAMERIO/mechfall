@@ -20,7 +20,8 @@ import {
   type PaintStroke,
   type Pose,
   type RoundState,
-  type ServerMessage
+  type ServerMessage,
+  type Vec3
 } from "@mechfall/shared";
 import { moveBody, moveClingingBody, wantsToDetachFromSurface } from "./physics.js";
 
@@ -47,6 +48,11 @@ const HUNTER_MUZZLE_RIGHT = 0.3;
 const HUNTER_MUZZLE_VERTICAL = -0.31;
 const HUNTER_MUZZLE_FORWARD = 1.97;
 const HUNTER_CAMERA_FACE_OFFSET = 0.18;
+const HIDER_HITBOX_HEIGHT = 2.3;
+const HIDER_HITBOX_RADIUS = 0.5;
+const HIDER_HITBOX_HALF_SEGMENT = (HIDER_HITBOX_HEIGHT - HIDER_HITBOX_RADIUS * 2) / 2;
+const SHOTGUN_HIT_ALLOWANCE = 0.18;
+const SHOTGUN_SPREAD_PER_UNIT = 0.035;
 
 export class GameRoom {
   readonly id: string;
@@ -119,6 +125,9 @@ export class GameRoom {
     if (message.type === "paintStrokes") this.applyPaintStrokes(player, message.strokes);
     if (message.type === "undoPaint") this.undoPaint(player, message.actionId);
     if (message.type === "redoPaint") this.redoPaint(player, message.actionId);
+    if (message.type === "paintRotation" && player.role === "hider" && player.alive && isFiniteNumber(message.roll)) {
+      player.bodyRoll = snapBodyRoll(message.roll);
+    }
     if (message.type === "clearPaint" && player.role === "hider" && player.alive) {
       player.paintStrokes = [];
       player.paintRedo = [];
@@ -145,6 +154,7 @@ export class GameRoom {
       position: { x: spawn[0], y: spawn[1], z: spawn[2] },
       velocity: { x: 0, y: 0, z: 0 },
       yaw: 0,
+      bodyRoll: 0,
       aimYaw: 0,
       aimPitch: -0.22,
       role: "hider",
@@ -154,7 +164,7 @@ export class GameRoom {
       score: 0,
       tags: 0,
       whistlingUntil: 0,
-      input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: 0, aimYaw: 0, pitch: -0.22 },
+      input: { sequence: 0, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, positionLocked: false, yaw: 0, aimYaw: 0, pitch: -0.22 },
       lastInputAt: Date.now(),
       lastShotAt: 0,
       lastWhistleAt: 0,
@@ -183,9 +193,14 @@ export class GameRoom {
       sprint: candidate.sprint === true,
       climb: clamp(climb, -1, 1),
       detach: player.input.detach || candidate.detach === true,
-      yaw: normalizeAngle(candidate.yaw),
-      aimYaw: isFiniteNumber(candidate.aimYaw) ? normalizeAngle(candidate.aimYaw) : normalizeAngle(candidate.yaw),
-      pitch: isFiniteNumber(candidate.pitch) ? clamp(candidate.pitch, -0.85, 0.48) : player.input.pitch
+      positionLocked: candidate.positionLocked === true,
+      yaw: candidate.positionLocked === true ? player.input.yaw : normalizeAngle(candidate.yaw),
+      aimYaw: candidate.positionLocked === true
+        ? player.input.aimYaw
+        : isFiniteNumber(candidate.aimYaw) ? normalizeAngle(candidate.aimYaw) : normalizeAngle(candidate.yaw),
+      pitch: candidate.positionLocked === true
+        ? player.input.pitch
+        : isFiniteNumber(candidate.pitch) ? clamp(candidate.pitch, -0.85, 0.48) : player.input.pitch
     };
     player.aimYaw = player.input.aimYaw;
     player.aimPitch = player.input.pitch;
@@ -261,6 +276,13 @@ export class GameRoom {
       const detachRequested = player.input.detach;
       player.input.detach = false;
       if (!player.alive || player.role === "spectator") continue;
+      if (player.input.positionLocked) {
+        player.input.jump = false;
+        player.velocity.x = 0;
+        player.velocity.y = 0;
+        player.velocity.z = 0;
+        continue;
+      }
 
       const frozen = this.round.phase === "results" || (this.round.phase === "hiding" && player.role === "hunter");
       const stale = now - player.lastInputAt > GAME.inputTimeoutMs;
@@ -386,6 +408,10 @@ export class GameRoom {
       player.role = roleIndex < hunterCount ? "hunter" : "hider";
       player.alive = true;
       player.pose = "stand";
+      if (player.role === "hunter") {
+        player.bodyRoll = 0;
+        player.input.positionLocked = false;
+      }
       player.color = player.role === "hunter" ? "#ff5d52" : "#f5f0df";
       player.whistlingUntil = 0;
       player.paintStrokes = [];
@@ -457,16 +483,10 @@ export class GameRoom {
     let closestDistance = blockedAt;
     for (const target of this.players.values()) {
       if (target.role !== "hider" || !target.alive) continue;
-      const dx = target.position.x - origin.x;
-      const dy = target.position.y + 1.05 - origin.y;
-      const dz = target.position.z - origin.z;
-      const along = dx * direction.x + dy * direction.y + dz * direction.z;
-      if (along <= 0 || along >= closestDistance) continue;
-      const perpendicularSquared = Math.max(0, dx * dx + dy * dy + dz * dz - along * along);
-      const spreadRadius = 0.68 + along * 0.035;
-      if (perpendicularSquared > spreadRadius * spreadRadius) continue;
+      const hitDistance = rayBodyHitDistance(origin, direction, target, closestDistance);
+      if (hitDistance === undefined) continue;
       closest = target;
-      closestDistance = along;
+      closestDistance = hitDistance;
     }
 
     const endDistance = closest ? closestDistance : blockedAt;
@@ -535,6 +555,76 @@ export class GameRoom {
 function sanitizeName(name: string): string {
   const clean = String(name ?? "").replace(/[^a-z0-9 _-]/gi, "").trim().slice(0, 18);
   return clean || `Drifter ${Math.floor(Math.random() * 900 + 100)}`;
+}
+
+function snapBodyRoll(value: number): number {
+  const quarterTurn = Math.PI / 2;
+  const snapped = Math.round(value / quarterTurn) * quarterTurn;
+  return normalizeAngle(snapped);
+}
+
+/**
+ * Finds a shot against the character capsule after applying the paint-studio
+ * quarter turn. This moves the head end of the hitbox with the visible head.
+ */
+function rayBodyHitDistance(origin: Vec3, direction: Vec3, target: PlayerState, maxDistance: number): number | undefined {
+  const roll = target.bodyRoll ?? 0;
+  const rollSin = Math.sin(roll);
+  const bodyAxis = {
+    x: Math.cos(target.yaw) * rollSin,
+    y: Math.cos(roll),
+    z: -Math.sin(target.yaw) * rollSin
+  };
+  const center = {
+    x: target.position.x,
+    y: target.position.y + HIDER_HITBOX_HEIGHT / 2,
+    z: target.position.z
+  };
+  const segmentStart = {
+    x: center.x - bodyAxis.x * HIDER_HITBOX_HALF_SEGMENT,
+    y: center.y - bodyAxis.y * HIDER_HITBOX_HALF_SEGMENT,
+    z: center.z - bodyAxis.z * HIDER_HITBOX_HALF_SEGMENT
+  };
+  const segment = {
+    x: bodyAxis.x * HIDER_HITBOX_HALF_SEGMENT * 2,
+    y: bodyAxis.y * HIDER_HITBOX_HALF_SEGMENT * 2,
+    z: bodyAxis.z * HIDER_HITBOX_HALF_SEGMENT * 2
+  };
+  const fromSegment = {
+    x: origin.x - segmentStart.x,
+    y: origin.y - segmentStart.y,
+    z: origin.z - segmentStart.z
+  };
+  const raySegmentDot = dot3(direction, segment);
+  const segmentLengthSquared = dot3(segment, segment);
+  const rayOffsetDot = dot3(direction, fromSegment);
+  const segmentOffsetDot = dot3(segment, fromSegment);
+  const denominator = Math.max(Number.EPSILON, segmentLengthSquared - raySegmentDot * raySegmentDot);
+  let segmentT = clamp((segmentOffsetDot - raySegmentDot * rayOffsetDot) / denominator, 0, 1);
+  let along = Math.max(0, raySegmentDot * segmentT - rayOffsetDot);
+  segmentT = clamp((segmentOffsetDot + raySegmentDot * along) / segmentLengthSquared, 0, 1);
+  along = Math.max(0, raySegmentDot * segmentT - rayOffsetDot);
+  if (along <= 0 || along >= maxDistance) return undefined;
+
+  const rayPoint = {
+    x: origin.x + direction.x * along,
+    y: origin.y + direction.y * along,
+    z: origin.z + direction.z * along
+  };
+  const bodyPoint = {
+    x: segmentStart.x + segment.x * segmentT,
+    y: segmentStart.y + segment.y * segmentT,
+    z: segmentStart.z + segment.z * segmentT
+  };
+  const dx = rayPoint.x - bodyPoint.x;
+  const dy = rayPoint.y - bodyPoint.y;
+  const dz = rayPoint.z - bodyPoint.z;
+  const hitRadius = HIDER_HITBOX_RADIUS + SHOTGUN_HIT_ALLOWANCE + along * SHOTGUN_SPREAD_PER_UNIT;
+  return dx * dx + dy * dy + dz * dz <= hitRadius * hitRadius ? along : undefined;
+}
+
+function dot3(a: Vec3, b: Vec3): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
 function isFiniteNumber(value: unknown): value is number {

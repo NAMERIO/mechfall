@@ -17,12 +17,16 @@ export class InputController {
   onTogglePaint?: () => void;
   onToggleCollisionDebug?: () => void;
   private paintMode = false;
+  private positionLocked = false;
   private poseMenuHeld = false;
+  private bodyLookHeld = false;
   private freeLookHeld = false;
+  private freeLookMovement = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     window.addEventListener("keydown", (event) => {
       if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight", "Digit1", "F7"].includes(event.code)) event.preventDefault();
+      if (this.positionLocked && POSITION_MOVEMENT_KEYS.has(event.code)) return;
       this.keys.add(event.code);
       if (event.code === "Space" && !event.repeat) this.jumpQueued = true;
       if (event.code === "KeyR" && !event.repeat) {
@@ -45,59 +49,80 @@ export class InputController {
     window.addEventListener("blur", () => {
       this.keys.clear();
       this.jumpQueued = false;
+      this.bodyLookHeld = false;
       this.freeLookHeld = false;
+      this.freeLookMovement = 0;
       if (this.poseMenuHeld) {
         this.poseMenuHeld = false;
         this.onPoseMenuEnd?.();
       }
     });
     document.addEventListener("mousemove", (event) => {
-      if (this.paintMode || document.pointerLockElement !== this.canvas) return;
-      if (this.freeLookHeld) {
+      if (this.paintMode) return;
+      if (this.bodyLookHeld) {
+        this.yaw = normalizeAngle(this.yaw - event.movementX * 0.0022);
+        this.pitch = Math.max(-0.85, Math.min(0.48, this.pitch - event.movementY * 0.0018));
+      } else if (this.freeLookHeld) {
+        this.freeLookMovement += Math.abs(event.movementX) + Math.abs(event.movementY);
         this.cameraYawOffset = normalizeAngle(this.cameraYawOffset - event.movementX * 0.0022);
         const cameraPitch = Math.max(
           -0.85,
           Math.min(0.48, this.pitch + this.cameraPitchOffset - event.movementY * 0.0018)
         );
         this.cameraPitchOffset = cameraPitch - this.pitch;
-        return;
       }
-      this.yaw = normalizeAngle(this.yaw - event.movementX * 0.0022);
-      this.pitch = Math.max(-0.85, Math.min(0.48, this.pitch - event.movementY * 0.0018));
     });
     this.canvas.addEventListener("mousedown", (event) => {
       if (this.paintMode) return;
-      event.preventDefault();
-      if (document.pointerLockElement !== this.canvas) void this.canvas.requestPointerLock().catch(() => {});
-      if (event.button === 2) this.freeLookHeld = true;
-      if (event.button === 0) this.onAction?.();
+      if (event.button === 2) {
+        event.preventDefault();
+        if (this.positionLocked) return;
+        this.bodyLookHeld = true;
+        this.requestMouseCapture();
+      } else if (event.button === 0) {
+        event.preventDefault();
+        this.freeLookHeld = true;
+        this.freeLookMovement = 0;
+        this.requestMouseCapture();
+      }
     });
     window.addEventListener("mouseup", (event) => {
-      if (event.button === 2) this.freeLookHeld = false;
+      if (event.button === 2) this.bodyLookHeld = false;
+      if (event.button === 0 && this.freeLookHeld) {
+        const wasClick = this.freeLookMovement < FREE_LOOK_DRAG_THRESHOLD;
+        this.freeLookHeld = false;
+        this.freeLookMovement = 0;
+        if (wasClick) this.onAction?.();
+      }
+      if (!this.bodyLookHeld && !this.freeLookHeld && document.pointerLockElement === this.canvas) document.exitPointerLock();
     });
     document.addEventListener("pointerlockchange", () => {
-      if (document.pointerLockElement !== this.canvas) this.freeLookHeld = false;
+      if (document.pointerLockElement !== this.canvas) {
+        this.bodyLookHeld = false;
+        this.freeLookHeld = false;
+        this.freeLookMovement = 0;
+      }
     });
   }
 
   snapshot(): InputPayload {
     if (this.paintMode) {
       this.jumpQueued = false;
-      const aim = this.aim();
-      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, yaw: this.yaw, aimYaw: aim.yaw, pitch: aim.pitch };
+      const aim = this.bodyAim();
+      return { sequence: ++this.sequence, forward: 0, strafe: 0, jump: false, sprint: false, climb: 0, detach: false, positionLocked: this.positionLocked, yaw: this.yaw, aimYaw: aim.yaw, pitch: aim.pitch };
     }
     const { forward, strafe, sprint } = this.movement();
-    const jump = this.jumpQueued;
-    const climbUp = this.keys.has("Space");
-    const climbDown = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const jump = !this.positionLocked && this.jumpQueued;
+    const climbUp = !this.positionLocked && this.keys.has("Space");
+    const climbDown = !this.positionLocked && (this.keys.has("ShiftLeft") || this.keys.has("ShiftRight"));
     const climb = climbUp ? 1 : climbDown ? -1 : 0;
     this.jumpQueued = false;
-    const aim = this.aim();
-    return { sequence: ++this.sequence, forward, strafe, jump, sprint, climb, detach: false, yaw: this.yaw, aimYaw: aim.yaw, pitch: aim.pitch };
+    const aim = this.bodyAim();
+    return { sequence: ++this.sequence, forward, strafe, jump, sprint, climb, detach: false, positionLocked: this.positionLocked, yaw: this.yaw, aimYaw: aim.yaw, pitch: aim.pitch };
   }
 
   movement(): { forward: number; strafe: number; sprint: boolean } {
-    if (this.paintMode) return { forward: 0, strafe: 0, sprint: false };
+    if (this.paintMode || this.positionLocked) return { forward: 0, strafe: 0, sprint: false };
     const forward = Number(this.keys.has("KeyW")) - Number(this.keys.has("KeyS"));
     const strafe = Number(this.keys.has("KeyD")) - Number(this.keys.has("KeyA"));
     const sprint = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
@@ -118,6 +143,19 @@ export class InputController {
     if (active && document.pointerLockElement === this.canvas) document.exitPointerLock();
   }
 
+  setPositionLocked(active: boolean): void {
+    this.positionLocked = active;
+    if (!active) return;
+    for (const key of POSITION_MOVEMENT_KEYS) this.keys.delete(key);
+    this.jumpQueued = false;
+    this.bodyLookHeld = false;
+    if (!this.freeLookHeld && document.pointerLockElement === this.canvas) document.exitPointerLock();
+  }
+
+  bodyAim(): { yaw: number; pitch: number } {
+    return { yaw: this.yaw, pitch: this.pitch };
+  }
+
   updateCamera(dt: number): void {
     if (this.freeLookHeld) return;
     const response = 1 - Math.exp(-FREE_LOOK_RECENTER_RESPONSE * dt);
@@ -128,13 +166,22 @@ export class InputController {
   }
 
   private faceCamera(): void {
-    if (this.paintMode) return;
+    if (this.paintMode || this.positionLocked) return;
     this.yaw = normalizeAngle(this.yaw + this.cameraYawOffset);
     this.cameraYawOffset = 0;
+  }
+
+  private requestMouseCapture(): void {
+    if (document.pointerLockElement === this.canvas) return;
+    void this.canvas.requestPointerLock().then(() => {
+      if (!this.bodyLookHeld && !this.freeLookHeld && document.pointerLockElement === this.canvas) document.exitPointerLock();
+    }).catch(() => {});
   }
 }
 
 const FREE_LOOK_RECENTER_RESPONSE = 9;
+const FREE_LOOK_DRAG_THRESHOLD = 5;
+const POSITION_MOVEMENT_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"]);
 
 function normalizeAngle(value: number): number {
   return Math.atan2(Math.sin(value), Math.cos(value));

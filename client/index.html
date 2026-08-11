@@ -63,6 +63,13 @@
 
     <div id="hud" class="hud hidden">
       <button id="leave-game-button" class="leave-game-button" type="button" aria-label="Leave game and return home">← HOME / LEAVE</button>
+      <button id="position-lock-button" class="position-lock-button" type="button" aria-label="Lock player position" aria-pressed="false" title="Lock your player in place">
+        <!-- Lock and LockOpen icons from Lucide (ISC license). -->
+        <span class="position-lock-icon" aria-hidden="true">
+          <svg class="lock-icon lock-icon-closed" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          <svg class="lock-icon lock-icon-open" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 9.9-1"></path></svg>
+        </span>
+      </button>
       <div class="hud-top">
         <section class="room-chip" title="Click to copy game ID"><span>GAME ID</span><strong id="game-code">------</strong></section>
         <section class="round-clock">
@@ -129,6 +136,10 @@
           <div class="paint-history-tools" aria-label="Paint history">
             <button id="undo-paint-button" class="tool-button" type="button" disabled><b>↶</b><span>UNDO</span></button>
             <button id="redo-paint-button" class="tool-button" type="button" disabled><b>↷</b><span>REDO</span></button>
+          </div>
+          <div class="paint-rotation-tools" aria-label="Rotate player body">
+            <button id="rotate-paint-left-button" class="tool-button" type="button"><b>&#8634;</b><span>ROTATE LEFT</span></button>
+            <button id="rotate-paint-right-button" class="tool-button" type="button"><b>&#8635;</b><span>ROTATE RIGHT</span></button>
           </div>
           <button id="done-paint-button" class="done-paint-button">DONE PAINTING <kbd>F</kbd></button>
         </div>

@@ -120,6 +120,8 @@ export class WorldRenderer {
   private paintView = false;
   private paintOrbitYaw = 0;
   private paintOrbitPitch = 0;
+  private paintBodyRoll = 0;
+  private readonly paintCameraFocusOffset = new THREE.Vector3();
   private cameraDistance = 5.4;
   private targetCameraDistance = 5.4;
   private readonly cameraFocus = new THREE.Vector3();
@@ -267,10 +269,13 @@ export class WorldRenderer {
       this.renderer.setPixelRatio(targetPixelRatio);
       this.resize();
     }
+    const avatar = this.avatars.get(this.selfId);
+    if (active) this.paintBodyRoll = avatar?.state.bodyRoll ?? this.paintBodyRoll;
     if (active) {
       // Preserve the normal behind-the-player view when opening paint mode.
       this.paintOrbitYaw = 0;
       this.paintOrbitPitch = 0;
+      this.paintCameraFocusOffset.set(0, 0, 0);
     }
   }
 
@@ -280,10 +285,49 @@ export class WorldRenderer {
     this.paintOrbitPitch = Math.max(-0.5, Math.min(0.72, this.paintOrbitPitch - deltaY * 0.004));
   }
 
-  zoomCamera(deltaY: number): void {
+  rotatePaintBody(direction: -1 | 1): number | undefined {
+    if (!this.paintView) return undefined;
+    const nextRoll = this.paintBodyRoll + direction * PAINT_BODY_ROTATION_STEP;
+    this.paintBodyRoll = Math.atan2(Math.sin(nextRoll), Math.cos(nextRoll));
+    return this.paintBodyRoll;
+  }
+
+  zoomCamera(deltaY: number, clientX?: number, clientY?: number): void {
     if (!Number.isFinite(deltaY) || deltaY === 0) return;
     const zoomDelta = Math.sign(deltaY) * THREE.MathUtils.clamp(Math.abs(deltaY) * 0.0045, 0.1, 0.48);
-    this.targetCameraDistance = THREE.MathUtils.clamp(this.targetCameraDistance + zoomDelta, 2.8, 15);
+    const minimumDistance = this.paintView ? PAINT_MIN_CAMERA_DISTANCE : 2.8;
+    const nextDistance = THREE.MathUtils.clamp(this.targetCameraDistance + zoomDelta, minimumDistance, 15);
+    if (
+      this.paintView
+      && Number.isFinite(clientX)
+      && Number.isFinite(clientY)
+      && nextDistance !== this.targetCameraDistance
+    ) {
+      const avatar = this.avatars.get(this.selfId);
+      if (avatar) {
+        avatar.root.updateWorldMatrix(true, true);
+        this.camera.updateMatrixWorld(true);
+        this.setRayFromScreen(clientX!, clientY!);
+        const meshes = [...avatar.paintSurfaces.values()].map((surface) => surface.mesh);
+        const hit = this.raycaster.intersectObjects(meshes, false).find(({ object }) => isVisibleInScene(object));
+        if (hit) {
+          const currentDistance = Math.max(this.cameraDistance, 0.001);
+          const scale = nextDistance / currentDistance;
+          const nextFocus = hit.point.clone().add(this.cameraFocus.clone().sub(hit.point).multiplyScalar(scale));
+          const nextCamera = hit.point.clone().add(this.camera.position.clone().sub(hit.point).multiplyScalar(scale));
+          const roleScale = avatar.state.role === "hunter" ? GAME.hunterCameraScale : 1;
+          const baseFocus = avatar.root.position.clone().add(
+            new THREE.Vector3(0, POSE_CAMERA_HEIGHT[avatar.state.pose] * roleScale, 0)
+          );
+          this.paintCameraFocusOffset.copy(nextFocus).sub(baseFocus);
+          this.cameraFocus.copy(nextFocus);
+          this.camera.position.copy(nextCamera);
+          this.cameraDistance = nextDistance;
+          this.camera.lookAt(nextFocus);
+        }
+      }
+    }
+    this.targetCameraDistance = nextDistance;
   }
 
   applySnapshot(snapshot: ServerSnapshot): void {
@@ -309,6 +353,7 @@ export class WorldRenderer {
       avatar.snapshotReceivedAt = performance.now();
       avatar.targetYaw = player.yaw;
       avatar.state = player;
+      if (player.id === this.selfId && !this.paintView) this.paintBodyRoll = player.bodyRoll ?? 0;
       avatar.root.scale.setScalar(player.role === "hunter" ? GAME.hunterVisualScale : 1);
       if (avatar.baseColor !== player.color) {
         avatar.baseColor = player.color;
@@ -1294,6 +1339,14 @@ export class WorldRenderer {
   private updateAttachedVisualOffset(avatar: Avatar, dt: number): void {
     if (!avatar.visual || !avatar.visualBasePosition) return;
     this.attachedVisualTarget.copy(avatar.visualBasePosition);
+    const paintRoll = avatar.state.id === this.selfId ? this.paintBodyRoll : avatar.state.bodyRoll ?? 0;
+    avatar.visual.rotation.z += shortestAngle(avatar.visual.rotation.z, paintRoll)
+      * (1 - Math.exp(-PAINT_BODY_ROTATION_RESPONSE * dt));
+    if (Math.abs(avatar.visual.rotation.z) > 0.0001) {
+      const pivotHeight = CHARACTER_HEIGHT * 0.5;
+      this.attachedVisualTarget.x -= Math.sin(avatar.visual.rotation.z) * pivotHeight;
+      this.attachedVisualTarget.y += (1 - Math.cos(avatar.visual.rotation.z)) * pivotHeight;
+    }
     const cling = avatar.state.cling;
     if (cling) {
       const normalLength = Math.hypot(cling.normalX, cling.normalZ);
@@ -1324,7 +1377,8 @@ export class WorldRenderer {
 
   private localAvatarYaw(): number {
     if (!this.input) return 0;
-    if (this.avatars.get(this.selfId)?.state.role === "hunter") return this.input.yaw;
+    const avatar = this.avatars.get(this.selfId);
+    if (avatar?.state.role === "hunter" || avatar?.state.cling) return this.input.yaw;
     const { forward, strafe } = this.input.movement();
     if (Math.abs(forward) > 0.05 || Math.abs(strafe) > 0.05) return this.input.yaw - Math.atan2(strafe, forward);
     return this.input.yaw;
@@ -1406,13 +1460,13 @@ export class WorldRenderer {
 
   private hunterAimPitch(avatar: Avatar): number {
     if (avatar.state.id === this.selfId && this.input) {
-      return THREE.MathUtils.clamp(this.input.aim().pitch + HUNTER_NEUTRAL_INPUT_PITCH, -0.75, 0.45);
+      return THREE.MathUtils.clamp(this.input.bodyAim().pitch + HUNTER_NEUTRAL_INPUT_PITCH, -0.75, 0.45);
     }
     return hunterAimRadians(avatar.state);
   }
 
   private hunterAimYaw(avatar: Avatar): number {
-    if (avatar.state.id === this.selfId && this.input) return this.input.aim().yaw;
+    if (avatar.state.id === this.selfId && this.input) return this.input.bodyAim().yaw;
     return hunterAimYaw(avatar.state);
   }
 
@@ -1457,7 +1511,7 @@ export class WorldRenderer {
         && displayPose === "stand"
         && !this.firstPersonHunterActive
         && this.roundPhase === "waiting";
-      const aimPitch = this.input ? this.input.aim().pitch : 0;
+      const aimPitch = this.input ? this.input.bodyAim().pitch : 0;
       const remoteHunterPitch = id !== this.selfId
         && avatar.state.role === "hunter"
         && avatar.state.cling === undefined
@@ -1552,6 +1606,7 @@ export class WorldRenderer {
       const distance = this.cameraDistance;
       const roleScale = focus.state.role === "hunter" ? GAME.hunterCameraScale : 1;
       const target = focus.root.position.clone().add(new THREE.Vector3(0, POSE_CAMERA_HEIGHT[focus.state.pose] * roleScale, 0));
+      if (this.paintView) target.add(this.paintCameraFocusOffset);
       if (!this.cameraRigInitialized) {
         this.cameraFocus.copy(target);
         this.cameraOrbitYaw = yaw;
@@ -1566,9 +1621,10 @@ export class WorldRenderer {
         );
       }
       const horizontal = Math.cos(this.cameraOrbitPitch) * distance;
+      const verticalLift = this.paintView ? distance * PAINT_CAMERA_VERTICAL_LIFT_RATIO : CAMERA_VERTICAL_LIFT;
       const desired = this.cameraFocus.clone().add(new THREE.Vector3(
         Math.sin(this.cameraOrbitYaw) * horizontal,
-        CAMERA_VERTICAL_LIFT + Math.sin(-this.cameraOrbitPitch) * distance,
+        verticalLift + Math.sin(-this.cameraOrbitPitch) * distance,
         Math.cos(this.cameraOrbitYaw) * horizontal
       ));
       const safeDesired = this.resolveCameraObstruction(this.cameraFocus, desired);
@@ -2008,6 +2064,10 @@ const CAMERA_ZOOM_RESPONSE = 4.5;
 const CAMERA_FOCUS_RESPONSE = 6;
 const CAMERA_ORBIT_RESPONSE = 18;
 const CAMERA_POSITION_RESPONSE = 22;
+const PAINT_MIN_CAMERA_DISTANCE = 0.75;
+const PAINT_BODY_ROTATION_STEP = Math.PI / 2;
+const PAINT_BODY_ROTATION_RESPONSE = 18;
+const PAINT_CAMERA_VERTICAL_LIFT_RATIO = 0.22;
 const LOCAL_TURN_RESPONSE = 18;
 const REMOTE_TURN_RESPONSE = 18;
 const MAX_BODY_PITCH_UP = Math.PI / 2;

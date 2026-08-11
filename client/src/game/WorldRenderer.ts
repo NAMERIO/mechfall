@@ -1,6 +1,13 @@
 import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { ConvexGeometry } from "three/addons/geometries/ConvexGeometry.js";
+import { RectAreaLightUniformsLib } from "three/addons/lights/RectAreaLightUniformsLib.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
   GAME,
@@ -77,6 +84,18 @@ interface CharacterAlignment {
 export class WorldRenderer {
   readonly canvas: HTMLCanvasElement;
   private readonly renderer: THREE.WebGLRenderer;
+  private readonly composer: EffectComposer;
+  private readonly bloomComposer: EffectComposer;
+  private readonly bloomPass: UnrealBloomPass;
+  private readonly bloomOccluderMaterial = new THREE.MeshBasicMaterial({
+    color: "#000000",
+    side: THREE.DoubleSide
+  });
+  private readonly bloomOriginalMaterials = new Map<
+    THREE.Object3D,
+    THREE.Material | THREE.Material[]
+  >();
+  private readonly environmentTarget: THREE.WebGLRenderTarget;
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(58, 1, 0.1, 110);
   private readonly clock = new THREE.Clock();
@@ -143,11 +162,55 @@ export class WorldRenderer {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.12;
+    this.renderer.toneMappingExposure = 0.94;
     container.append(this.canvas);
 
-    this.scene.background = new THREE.Color("#b8c4ba");
-    this.scene.fog = new THREE.FogExp2("#000000", 0.018);
+    RectAreaLightUniformsLib.init();
+    const environmentGenerator = new THREE.PMREMGenerator(this.renderer);
+    this.environmentTarget = environmentGenerator.fromScene(new RoomEnvironment(), 0.04);
+    this.scene.environment = this.environmentTarget.texture;
+    environmentGenerator.dispose();
+
+    this.camera.layers.enable(1);
+    this.bloomComposer = new EffectComposer(this.renderer);
+    this.bloomComposer.renderToScreen = false;
+    this.bloomComposer.setPixelRatio(Math.min(window.devicePixelRatio, 0.8));
+    this.bloomComposer.addPass(new RenderPass(this.scene, this.camera));
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.16, 0.42, 0.02);
+    this.bloomComposer.addPass(this.bloomPass);
+
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.setPixelRatio(Math.min(window.devicePixelRatio, 1.35));
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    const combineBloom = new ShaderPass(
+      new THREE.ShaderMaterial({
+        uniforms: {
+          baseTexture: { value: null },
+          bloomTexture: { value: this.bloomComposer.renderTarget2.texture }
+        },
+        vertexShader: `
+          varying vec2 textureCoordinate;
+          void main() {
+            textureCoordinate = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D baseTexture;
+          uniform sampler2D bloomTexture;
+          varying vec2 textureCoordinate;
+          void main() {
+            gl_FragColor = texture2D(baseTexture, textureCoordinate) + texture2D(bloomTexture, textureCoordinate);
+          }
+        `
+      }),
+      "baseTexture"
+    );
+    this.composer.addPass(combineBloom);
+    this.composer.addPass(new OutputPass());
+
+    this.scene.background = new THREE.Color("#86a7bb");
+    this.scene.fog = new THREE.FogExp2("#71818a", 0.0055);
     this.scene.add(this.camera);
     this.collisionDebugRoot.name = "collision-debug";
     this.collisionDebugRoot.visible = false;
@@ -677,28 +740,80 @@ export class WorldRenderer {
     this.running = false;
     this.collisionDebugFillMaterial.dispose();
     this.collisionDebugLineMaterial.dispose();
+    this.environmentTarget.dispose();
+    this.bloomPass.dispose();
+    this.bloomOccluderMaterial.dispose();
+    this.bloomComposer.dispose();
+    this.composer.dispose();
     this.renderer.dispose();
   }
 
   private buildLighting(): void {
-    this.scene.add(new THREE.HemisphereLight("#f7f0d7", "#53616c", 2.4));
-    const sun = new THREE.DirectionalLight("#fff5d6", 4.2);
-    sun.position.set(-13, 22, 10);
+    this.addSkyDome();
+
+    this.scene.add(new THREE.HemisphereLight("#b8dcf5", "#2a2422", 0.58));
+    const sun = new THREE.DirectionalLight("#ffe5ba", 5.8);
+    sun.position.set(-26, 38, -18);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.camera.left = -28;
-    sun.shadow.camera.right = 28;
-    sun.shadow.camera.top = 28;
-    sun.shadow.camera.bottom = -28;
-    sun.shadow.bias = -0.0002;
+    sun.shadow.camera.left = -42;
+    sun.shadow.camera.right = 42;
+    sun.shadow.camera.top = 48;
+    sun.shadow.camera.bottom = -48;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 95;
+    sun.shadow.bias = -0.00012;
+    sun.shadow.normalBias = 0.025;
     this.scene.add(sun);
 
-    const orange = new THREE.PointLight("#ff8b5b", 18, 18, 2);
+    const orange = new THREE.PointLight("#ffb36b", 8, 20, 2);
     orange.position.set(-14, 5, -12);
     this.scene.add(orange);
-    const cyan = new THREE.PointLight("#5edbd1", 16, 17, 2);
+    const cyan = new THREE.PointLight("#8fcfe2", 5, 18, 2);
     cyan.position.set(13, 4, 10);
     this.scene.add(cyan);
+  }
+
+  private addSkyDome(): void {
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(96, 32, 18),
+      new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        fog: false,
+        uniforms: {
+          topColor: { value: new THREE.Color("#438dcc") },
+          horizonColor: { value: new THREE.Color("#d9c1a4") },
+          bottomColor: { value: new THREE.Color("#6f7d80") },
+          horizon: { value: 0.06 }
+        },
+        vertexShader: `
+          varying vec3 worldDirection;
+          void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            worldDirection = normalize(worldPosition.xyz - cameraPosition);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 topColor;
+          uniform vec3 horizonColor;
+          uniform vec3 bottomColor;
+          uniform float horizon;
+          varying vec3 worldDirection;
+          void main() {
+            float above = smoothstep(horizon, 0.72, worldDirection.y);
+            float below = smoothstep(horizon, -0.45, worldDirection.y);
+            vec3 color = mix(horizonColor, topColor, above);
+            color = mix(color, bottomColor, below);
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `
+      })
+    );
+    sky.name = "sky-dome";
+    sky.renderOrder = -100;
+    this.scene.add(sky);
   }
 
   private buildWorld(): void {
@@ -725,6 +840,11 @@ export class WorldRenderer {
 
     for (const box of WORLD_BOXES) {
       const geometry = new THREE.BoxGeometry(...box.size);
+      if (box.id === "bunker-roof") {
+        if (box.solid) this.addCollisionDebugShape(geometry, new THREE.Vector3(...box.position));
+        this.addSkylightRoof(box);
+        continue;
+      }
       const material = new THREE.MeshStandardMaterial({ color: box.color, roughness: box.kind === "column" ? 0.45 : 0.78 });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.position.set(...box.position);
@@ -765,6 +885,133 @@ export class WorldRenderer {
     }
 
     void this.loadWorldModels();
+  }
+
+  private addSkylightRoof(box: (typeof WORLD_BOXES)[number]): void {
+    const [roofWidth, roofHeight, roofDepth] = box.size;
+    const [roofX, roofY, roofZ] = box.position;
+    const openingCenters = [-20, 0, 20];
+    const openingWidth = 9;
+    const openingDepth = Math.min(76, roofDepth - 12);
+    const openingStart = roofZ - openingDepth / 2;
+    const openingEnd = roofZ + openingDepth / 2;
+    const roofStart = roofX - roofWidth / 2;
+    const roofEnd = roofX + roofWidth / 2;
+    const ceilingY = roofY - 0.12;
+
+    const roofMaterial = new THREE.MeshStandardMaterial({
+      color: box.color,
+      roughness: 0.68,
+      metalness: 0.16,
+      envMapIntensity: 0.5
+    });
+    const addRoofSlab = (startX: number, endX: number, centerZ: number, depth: number): void => {
+      const width = endX - startX;
+      if (width <= 0 || depth <= 0) return;
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(width, roofHeight, depth), roofMaterial);
+      slab.position.set((startX + endX) / 2, ceilingY, centerZ);
+      slab.castShadow = true;
+      slab.receiveShadow = true;
+      slab.userData.sampleColor = box.color;
+      this.sampleSurfaces.push(slab);
+      this.scene.add(slab);
+    };
+
+    let solidStart = roofStart;
+    for (const center of openingCenters) {
+      const openingLeft = roofX + center - openingWidth / 2;
+      addRoofSlab(solidStart, openingLeft, roofZ, openingDepth);
+      solidStart = roofX + center + openingWidth / 2;
+    }
+    addRoofSlab(solidStart, roofEnd, roofZ, openingDepth);
+    addRoofSlab(roofStart, roofEnd, (roofZ - roofDepth / 2 + openingStart) / 2, openingStart - (roofZ - roofDepth / 2));
+    addRoofSlab(roofStart, roofEnd, (openingEnd + roofZ + roofDepth / 2) / 2, roofZ + roofDepth / 2 - openingEnd);
+
+    const glassMaterial = new THREE.MeshPhysicalMaterial({
+      color: "#b9dce9",
+      roughness: 0.12,
+      metalness: 0,
+      transmission: 0.38,
+      transparent: true,
+      opacity: 0.62,
+      thickness: 0.22,
+      ior: 1.45,
+      envMapIntensity: 1.25,
+      side: THREE.DoubleSide,
+      depthWrite: false
+    });
+    const frameMaterial = new THREE.MeshStandardMaterial({
+      color: "#20282d",
+      roughness: 0.28,
+      metalness: 0.88,
+      envMapIntensity: 1.1
+    });
+    const glareMaterial = new THREE.MeshBasicMaterial({
+      color: new THREE.Color("#cceeff").multiplyScalar(1.2),
+      transparent: true,
+      opacity: 0.06,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false
+    });
+    const frameParts: Array<{ position: THREE.Vector3; scale: THREE.Vector3 }> = [];
+
+    for (const center of openingCenters) {
+      const worldX = roofX + center;
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(openingWidth - 0.5, 0.16, openingDepth - 0.5), glassMaterial);
+      glass.name = "roof-skylight-glass";
+      glass.position.set(worldX, roofY + roofHeight / 2 + 0.03, roofZ);
+      glass.receiveShadow = true;
+      this.scene.add(glass);
+
+      const glare = new THREE.Mesh(
+        new THREE.PlaneGeometry(openingWidth - 0.15, openingDepth - 0.15),
+        glareMaterial
+      );
+      glare.name = "roof-skylight-glare";
+      glare.position.set(worldX, roofY - roofHeight / 2 - 0.025, roofZ);
+      glare.rotation.x = -Math.PI / 2;
+      glare.renderOrder = 2;
+      glare.layers.set(1);
+      this.scene.add(glare);
+
+      frameParts.push(
+        { position: new THREE.Vector3(worldX - openingWidth / 2, roofY + roofHeight / 2 + 0.15, roofZ), scale: new THREE.Vector3(0.34, 0.3, openingDepth) },
+        { position: new THREE.Vector3(worldX + openingWidth / 2, roofY + roofHeight / 2 + 0.15, roofZ), scale: new THREE.Vector3(0.34, 0.3, openingDepth) }
+      );
+      for (let z = openingStart; z <= openingEnd + 0.01; z += 9.5) {
+        frameParts.push({
+          position: new THREE.Vector3(worldX, roofY + roofHeight / 2 + 0.17, z),
+          scale: new THREE.Vector3(openingWidth, 0.34, 0.3)
+        });
+      }
+
+      const skylight = new THREE.RectAreaLight(
+        "#cfeaff",
+        1.8,
+        openingWidth * 0.92,
+        openingDepth * 0.96
+      );
+      skylight.name = "roof-skylight-area-light";
+      skylight.position.set(worldX, roofY - roofHeight / 2 - 0.08, roofZ);
+      skylight.rotation.x = -Math.PI / 2;
+      this.scene.add(skylight);
+
+    }
+
+    const frameGeometry = new THREE.BoxGeometry(1, 1, 1);
+    const frames = new THREE.InstancedMesh(frameGeometry, frameMaterial, frameParts.length);
+    frames.name = "roof-skylight-frames";
+    frames.castShadow = true;
+    frames.receiveShadow = true;
+    const matrix = new THREE.Matrix4();
+    for (const [index, part] of frameParts.entries()) {
+      matrix.compose(part.position, new THREE.Quaternion(), part.scale);
+      frames.setMatrixAt(index, matrix);
+    }
+    frames.instanceMatrix.needsUpdate = true;
+    this.scene.add(frames);
   }
 
   private addCollisionDebugShape(geometry: THREE.BufferGeometry, position?: THREE.Vector3): void {
@@ -1655,8 +1902,32 @@ export class WorldRenderer {
       this.beforeRenderTasks.delete(task);
       task();
     }
-    this.renderer.render(this.scene, this.camera);
+    this.renderSelectiveBloom();
+    this.composer.render();
   };
+
+  private renderSelectiveBloom(): void {
+    const previousBackground = this.scene.background;
+    this.scene.background = null;
+    this.bloomOriginalMaterials.clear();
+    this.scene.traverse((object) => {
+      const renderable = object as THREE.Object3D & {
+        material?: THREE.Material | THREE.Material[];
+      };
+      if (!renderable.material || object.layers.isEnabled(1)) return;
+      this.bloomOriginalMaterials.set(object, renderable.material);
+      renderable.material = this.bloomOccluderMaterial;
+    });
+    try {
+      this.bloomComposer.render();
+    } finally {
+      for (const [object, material] of this.bloomOriginalMaterials) {
+        (object as THREE.Object3D & { material: THREE.Material | THREE.Material[] }).material = material;
+      }
+      this.bloomOriginalMaterials.clear();
+      this.scene.background = previousBackground;
+    }
+  }
 
   private resize(): void {
     const width = window.innerWidth;
@@ -1664,6 +1935,8 @@ export class WorldRenderer {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    this.composer.setSize(width, height);
+    this.bloomComposer.setSize(width, height);
   }
 
   private resolveCameraObstruction(target: THREE.Vector3, desired: THREE.Vector3): THREE.Vector3 {

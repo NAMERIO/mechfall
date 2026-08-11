@@ -40,13 +40,18 @@ type ImportedAsset = {
   meshes: THREE.Mesh[];
 };
 type PlayerPreviewRole = "hider" | "seeker";
+type PlayerPreviewPose = "stand" | "run" | "walk" | "wall" | "crouch" | "curl" | "lay" | "tree";
 type PlayerPreview = {
   id: string;
   role: PlayerPreviewRole;
   color: string;
+  pose: PlayerPreviewPose;
   root: THREE.Group;
+  visual: THREE.Object3D;
   meshes: THREE.Mesh[];
   material: THREE.MeshStandardMaterial;
+  mixer: THREE.AnimationMixer;
+  actions: Map<string, THREE.AnimationAction>;
 };
 type EditableHull = {
   id: string;
@@ -116,6 +121,17 @@ const MAP_MAKER_PIXEL_RATIO_CAP = 1.2;
 const MAP_MAKER_IDLE_FRAME_INTERVAL = 1_000 / 30;
 const PLAYER_PREVIEW_HEIGHT = 2.45;
 const PLAYER_PREVIEW_STAND_CLIP = "ChameleonMan|Pose_Straight";
+const PLAYER_PREVIEW_CLIPS: Record<PlayerPreviewPose, { label: string; clip: string; sample: number }> = {
+  stand: { label: "STAND", clip: PLAYER_PREVIEW_STAND_CLIP, sample: 0 },
+  run: { label: "RUNNING", clip: "ChameleonMan|Running", sample: 0.38 },
+  walk: { label: "WALKING", clip: "ChameleonMan|Walking", sample: 0.42 },
+  wall: { label: "WALL HIDE", clip: "ChameleonMan|Pose_OpenWide", sample: 0 },
+  crouch: { label: "CROUCH HIDE", clip: "ChameleonMan|Pose_CrouchedFetal", sample: 0 },
+  curl: { label: "CURLED HIDE", clip: "ChameleonMan|Pose_CurledUpSit", sample: 0 },
+  lay: { label: "LAY DOWN", clip: "ChameleonMan|Pose_LayDown", sample: 0 },
+  tree: { label: "TREE POSE", clip: "ChameleonMan|Pose_Tree", sample: 0 }
+};
+const coverCaptureMode = new URLSearchParams(window.location.search).has("cover");
 
 document.body.className = "mapmaker-page";
 document.body.innerHTML = `
@@ -186,6 +202,7 @@ document.body.innerHTML = `
         </div>
         <div class="mapmaker-fields">
           <label>PAINT COLOR <input id="mm-player-color" type="color" value="#57b9a9" disabled /></label>
+          <label>POSE <select id="mm-player-pose" disabled>${Object.entries(PLAYER_PREVIEW_CLIPS).map(([pose, config]) => `<option value="${pose}">${config.label}</option>`).join("")}</select></label>
           <label>X <input id="mm-player-x" type="number" step="0.1" disabled /></label>
           <label>Y <input id="mm-player-y" type="number" step="0.1" disabled /></label>
           <label>Z <input id="mm-player-z" type="number" step="0.1" disabled /></label>
@@ -273,6 +290,7 @@ const scaleInputs = {
 };
 const playerPreviewInputs = {
   color: element<HTMLInputElement>("#mm-player-color"),
+  pose: element<HTMLSelectElement>("#mm-player-pose"),
   x: element<HTMLInputElement>("#mm-player-x"),
   y: element<HTMLInputElement>("#mm-player-y"),
   z: element<HTMLInputElement>("#mm-player-z"),
@@ -280,13 +298,15 @@ const playerPreviewInputs = {
 };
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color("#10191e");
+scene.background = new THREE.Color(coverCaptureMode ? "#071017" : "#10191e");
 
 const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 180);
 camera.position.set(20, 18, 24);
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAP_MAKER_PIXEL_RATIO_CAP));
 renderer.shadowMap.enabled = false;
+renderer.toneMapping = coverCaptureMode ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+renderer.toneMappingExposure = coverCaptureMode ? 1.2 : 1;
 host.append(renderer.domElement);
 
 const orbit = new OrbitControls(camera, renderer.domElement);
@@ -341,13 +361,24 @@ transform.addEventListener("objectChange", () => {
     exportJson();
   }
 });
-scene.add(transform.getHelper());
+if (!coverCaptureMode) scene.add(transform.getHelper());
 
-scene.add(new THREE.HemisphereLight("#fff3d2", "#41515a", 2.2));
-const sun = new THREE.DirectionalLight("#fff4cf", 3.2);
+scene.add(new THREE.HemisphereLight("#fff3d2", coverCaptureMode ? "#294153" : "#41515a", coverCaptureMode ? 1.7 : 2.2));
+const sun = new THREE.DirectionalLight("#fff0c2", coverCaptureMode ? 3.5 : 3.2);
 sun.position.set(-12, 24, 18);
 sun.castShadow = false;
 scene.add(sun);
+if (coverCaptureMode) {
+  const warmKey = new THREE.PointLight("#ffad70", 22, 52, 1.7);
+  warmKey.position.set(10, 10, 8);
+  scene.add(warmKey);
+  const coolFill = new THREE.PointLight("#6eb6ff", 18, 58, 1.8);
+  coolFill.position.set(-18, 9, -18);
+  scene.add(coolFill);
+  const seekerAccent = new THREE.PointLight("#ff5147", 12, 34, 2);
+  seekerAccent.position.set(2, 5, 4);
+  scene.add(seekerAccent);
+}
 
 let worldSize = WORLD_SIZE;
 let floorColor = DEFAULT_FLOOR_COLOR;
@@ -461,6 +492,7 @@ element<HTMLButtonElement>("#mm-test-toggle").addEventListener("click", () => {
 element<HTMLButtonElement>("#mm-add-hider").addEventListener("click", () => void spawnPlayerPreview("hider"));
 element<HTMLButtonElement>("#mm-add-seeker").addEventListener("click", () => void spawnPlayerPreview("seeker"));
 playerPreviewInputs.color.addEventListener("input", applyPlayerPreviewFields);
+playerPreviewInputs.pose.addEventListener("change", applyPlayerPreviewFields);
 playerPreviewInputs.x.addEventListener("input", applyPlayerPreviewFields);
 playerPreviewInputs.y.addEventListener("input", applyPlayerPreviewFields);
 playerPreviewInputs.z.addEventListener("input", applyPlayerPreviewFields);
@@ -532,6 +564,12 @@ window.addEventListener("keydown", (event) => {
     undoLastChange();
     return;
   }
+  if (event.code === "Escape" && !isTypingInForm()) {
+    event.preventDefault();
+    selectBox(undefined);
+    status.textContent = "Selection cleared.";
+    return;
+  }
   keys.add(event.code);
   if (!event.repeat && ["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE"].includes(event.code)
       && !isTypingInForm() && (selected || selectedHull || (selectedAsset && !playerPreviewForRoot(selectedAsset)))) checkpointUndo();
@@ -578,12 +616,11 @@ async function spawnPlayerPreview(role: PlayerPreviewRole): Promise<void> {
     const template = await playerPreviewTemplatePromise;
     const visual = cloneSkeleton(template.scene);
     visual.rotation.y = Math.PI;
-    const standingClip = template.animations.find((clip) => clip.name === PLAYER_PREVIEW_STAND_CLIP);
-    if (standingClip) {
-      const mixer = new THREE.AnimationMixer(visual);
-      mixer.clipAction(standingClip).reset().play();
-      mixer.update(0);
-    }
+    const mixer = new THREE.AnimationMixer(visual);
+    const actions = new Map(template.animations.map((clip) => [clip.name, mixer.clipAction(clip)]));
+    const standingAction = actions.get(PLAYER_PREVIEW_STAND_CLIP);
+    standingAction?.reset().play();
+    mixer.update(0);
     visual.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(visual, true);
     const size = bounds.getSize(new THREE.Vector3());
@@ -621,7 +658,7 @@ async function spawnPlayerPreview(role: PlayerPreviewRole): Promise<void> {
       root.add(ring);
       meshes.push(ring);
     }
-    const preview: PlayerPreview = { id, role, color, root, meshes, material };
+    const preview: PlayerPreview = { id, role, color, pose: "stand", root, visual, meshes, material, mixer, actions };
     playerPreviews.push(preview);
     scene.add(root);
     selectAsset(root);
@@ -634,12 +671,13 @@ async function spawnPlayerPreview(role: PlayerPreviewRole): Promise<void> {
 }
 
 function fillPlayerPreviewFields(preview: PlayerPreview | undefined): void {
-  for (const input of [playerPreviewInputs.color, playerPreviewInputs.x, playerPreviewInputs.y, playerPreviewInputs.z]) {
+  for (const input of [playerPreviewInputs.color, playerPreviewInputs.pose, playerPreviewInputs.x, playerPreviewInputs.y, playerPreviewInputs.z]) {
     input.disabled = !preview;
   }
   playerPreviewInputs.remove.disabled = !preview;
   if (!preview) return;
   playerPreviewInputs.color.value = preview.color;
+  playerPreviewInputs.pose.value = preview.pose;
   playerPreviewInputs.x.value = formatNumber(preview.root.position.x);
   playerPreviewInputs.y.value = formatNumber(preview.root.position.y);
   playerPreviewInputs.z.value = formatNumber(preview.root.position.z);
@@ -650,6 +688,8 @@ function applyPlayerPreviewFields(): void {
   if (!preview) return;
   preview.color = playerPreviewInputs.color.value || preview.color;
   preview.material.color.set(preview.color);
+  const pose = playerPreviewInputs.pose.value as PlayerPreviewPose;
+  if (pose !== preview.pose && pose in PLAYER_PREVIEW_CLIPS) applyPlayerPreviewPose(preview, pose);
   preview.root.position.set(
     numberInput(playerPreviewInputs.x, preview.root.position.x),
     numberInput(playerPreviewInputs.y, preview.root.position.y),
@@ -658,6 +698,22 @@ function applyPlayerPreviewFields(): void {
   preview.root.updateMatrixWorld(true);
   selectedTitle.textContent = `${preview.role.toUpperCase()}: ${preview.id}`;
   renderList();
+}
+
+function applyPlayerPreviewPose(preview: PlayerPreview, pose: PlayerPreviewPose): void {
+  const config = PLAYER_PREVIEW_CLIPS[pose];
+  const action = preview.actions.get(config.clip);
+  if (!action) {
+    status.textContent = `The character model does not include ${config.label.toLowerCase()}.`;
+    playerPreviewInputs.pose.value = preview.pose;
+    return;
+  }
+  preview.mixer.stopAllAction();
+  action.reset().setLoop(THREE.LoopOnce, 1).play();
+  preview.mixer.setTime(Math.min(config.sample, Math.max(0, action.getClip().duration - 0.001)));
+  preview.mixer.update(0);
+  preview.pose = pose;
+  preview.visual.updateMatrixWorld(true);
 }
 
 function deleteSelectedPlayerPreview(): void {
@@ -679,6 +735,8 @@ function removePlayerPreview(preview: PlayerPreview): void {
     for (const material of Array.isArray(child.material) ? child.material : [child.material]) materials.add(material);
   });
   for (const material of materials) material.dispose();
+  preview.mixer.stopAllAction();
+  preview.mixer.uncacheRoot(preview.visual);
   playerPreviews = playerPreviews.filter((candidate) => candidate !== preview);
   if (wasSelected) {
     const next = playerPreviews.at(-1);
@@ -858,6 +916,7 @@ function addBox(input: Omit<EditableBox, "mesh" | "edges">): EditableBox {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   const material = new THREE.MeshStandardMaterial({ color: input.color, transparent: true, opacity: input.solid ? 0.42 : 0.18, roughness: 0.8 });
   const mesh = new THREE.Mesh(geometry, material);
+  mesh.visible = !coverCaptureMode;
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: "#ff5e52", transparent: true, opacity: 0.85 }));
@@ -1157,6 +1216,7 @@ function selectBox(box: EditableBox | undefined): void {
   selectedAsset = undefined;
   if (box && transformMode === "rotate") setTransformMode("translate");
   transform.detach();
+  if (!box) transform.getHelper().visible = false;
   for (const item of boxes) syncBoxMesh(item);
   if (box) transform.attach(box.mesh);
   for (const hull of hulls) syncHullMesh(hull);

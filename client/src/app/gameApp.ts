@@ -77,6 +77,8 @@ whistleAudio.preload = "auto";
 const world = new WorldRenderer(game);
 const input = new InputController(world.canvas);
 world.bindInput(input);
+document.body.classList.add("menu-open");
+world.setRenderPaused(true);
 
 let connection: GameConnection | undefined;
 let latestSnapshot: ServerSnapshot | undefined;
@@ -387,6 +389,8 @@ function handleMessage(message: ServerMessage): void {
   if (message.type !== "snapshot") return;
 
   if (!latestSnapshot) {
+    document.body.classList.remove("menu-open");
+    world.setRenderPaused(false);
     loading.classList.add("hidden");
     hud.classList.remove("hidden");
     inputTimer = window.setInterval(() => connection?.send({ type: "input", input: input.snapshot() }), 1000 / 30);

@@ -117,6 +117,7 @@ export class WorldRenderer {
   private roundPhase: ServerSnapshot["round"]["phase"] = "waiting";
   private input?: InputController;
   private running = true;
+  private renderPaused = false;
   private paintView = false;
   private paintOrbitYaw = 0;
   private paintOrbitPitch = 0;
@@ -162,6 +163,11 @@ export class WorldRenderer {
 
   bindInput(input: InputController): void {
     this.input = input;
+  }
+
+  setRenderPaused(paused: boolean): void {
+    this.renderPaused = paused;
+    this.clock.getDelta();
   }
 
   toggleCollisionDebug(): boolean {
@@ -1473,6 +1479,10 @@ export class WorldRenderer {
   private animate = (): void => {
     if (!this.running) return;
     requestAnimationFrame(this.animate);
+    if (this.renderPaused) {
+      this.clock.getDelta();
+      return;
+    }
     const dt = Math.min(this.clock.getDelta(), 0.05);
     const elapsed = this.clock.elapsedTime;
 

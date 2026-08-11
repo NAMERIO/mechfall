@@ -400,7 +400,13 @@ button, input { font: inherit; }
 button { color: inherit; }
 .hidden { display: none !important; }
 
-#game { position: fixed; inset: 0; }
+#game {
+  position: fixed;
+  inset: 0;
+  background: #0b1115 url("/images/gameplay-cover-with-gun.png") center center / cover no-repeat;
+}
+#game canvas { opacity: 1; transition: opacity .2s ease; }
+body.menu-open #game canvas { opacity: 0; pointer-events: none; }
 #game::after {
   content: "";
   position: fixed;

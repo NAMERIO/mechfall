@@ -7,7 +7,7 @@ It generates:
 - oriented boxes for floors, walls, ceilings, cabinets, counters, and genuinely rectangular objects;
 - cylinders for pillars, columns, pipes, barrels, and other round objects;
 - reduced convex hulls for stairs, ramps, chairs, rocks, vehicles, and irregular large objects;
-- limited static triangle meshes for hollow tires/wheels and toilets so their openings remain open;
+- limited static triangle meshes for hollow tires/wheels, toilets, baskets, lockers, opened containers, and tool shelves so their openings remain open;
 - no collision for tiny decoration such as handles, plates, trim, lamps, cables, books, and bottles;
 - no door collision by default, so imported doorways remain passable;
 - room collections such as `COLLISION_ROOM__kitchen` when room names exist in the GLB hierarchy.
@@ -23,7 +23,7 @@ Open the house in Blender, switch to the **Scripting** workspace, open `generate
 For a direct GLB conversion, close Blender and run:
 
 ```powershell
-blender --background --python tools/blender/generate_compound_colliders.py -- `
+blender --background --python-exit-code 1 --python tools/blender/generate_compound_colliders.py -- `
   --input "C:\maps\house.glb" `
   --output "C:\maps\house.colliders.glb" `
   --manifest "C:\maps\house.colliders.json" `
@@ -49,6 +49,10 @@ Useful options:
 | `--include-doors` | Add collision to doors and gates. Doors are ignored by default. |
 | `--split-loose` | Process disconnected parts of merged mesh objects separately. |
 | `--no-group-materials` | Disable the default merging of sibling material meshes. |
+| `--audit-report path.json` | Write a review report for hollow, skipped, and detailed colliders. Defaults beside the manifest. |
+| `--strict-audit` | Fail if a known gameplay-hollow object was sealed by a box, cylinder, or convex hull. |
+| `--max-mesh-triangles 12000` | Set the per-object detailed-mesh warning budget. |
+| `--mesh-dissolve-angle 1` | Merge near-coplanar detailed-mesh triangles while preserving boundaries and openings. |
 | `--no-export` | Only generate the collision collection in the open scene. |
 | `--keep-existing` | Do not clear a previous generated collection. |
 
@@ -62,6 +66,8 @@ Name objects clearly (`Kitchen_Wall`, `LivingRoom_Couch`, `Pillar_04`) for the b
 | `collision_room` | Any room name | Overrides its generated room group. |
 
 Use `CONVEX` only for genuinely irregular solid objects. A convex hull cannot contain holes or inward corners. `MESH` preserves holes but costs more, so reserve it for a small number of static hollow props; an entire house must not be one mesh or convex collider.
+
+The default audit recognizes baskets, lockers, explicitly opened containers, and tool shelves as gameplay-hollow. Run production generation with `--strict-audit` so a naming or grouping change cannot silently turn one of them into a solid primitive. The audit file also records triangle counts for detailed meshes and larger skipped objects that deserve manual review.
 
 As a safety rule, an unclassified irregular object larger than `--max-convex-size` is skipped and reported instead of being turned into a giant blocker. Rename its components, set per-object overrides, split it into objects in Blender, or use `--split-loose`.
 

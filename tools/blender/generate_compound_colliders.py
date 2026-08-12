@@ -63,7 +63,13 @@ DETAILED_CONVEX_WORDS = (
     "sofa", "couch", "chair", "stool", "table", "desk", "toilet", "sink",
     "bathtub", "stair", "ramp", "vehicle", "car_wheel", "box_wood", "crate", "opened",
 )
-HOLLOW_MESH_WORDS = ("tire", "wheel", "toilet")
+# Static concave props whose openings are gameplay space. A box or convex hull
+# mathematically seals these cavities, so keep their evaluated triangles. Keep
+# this list narrow: nearly all level collision should still be cheap primitives.
+HOLLOW_MESH_WORDS = (
+    "tire", "wheel", "toilet", "basket", "locker", "opened", "tool_shelf",
+)
+GAMEPLAY_HOLLOW_WORDS = ("basket", "locker", "opened", "tool_shelf")
 DOOR_WORDS = ("door", "gate")
 ROOM_WORDS = (
     "room", "living", "kitchen", "bedroom", "bathroom", "garage", "hall",
@@ -95,6 +101,14 @@ def script_arguments() -> argparse.Namespace:
     parser.add_argument("--split-loose", action="store_true", help="Split copied meshes into disconnected parts before classifying.")
     parser.add_argument("--no-group-materials", action="store_true",
                         help="Do not merge sibling material meshes under their logical parent object.")
+    parser.add_argument("--audit-report", type=Path,
+                        help="Audit JSON path. Defaults next to the manifest as *.audit.json.")
+    parser.add_argument("--strict-audit", action="store_true",
+                        help="Fail if an enterable/hollow object is sealed by a primitive collider.")
+    parser.add_argument("--max-mesh-triangles", type=int, default=12000,
+                        help="Warn when one detailed static mesh exceeds this triangle count.")
+    parser.add_argument("--mesh-dissolve-angle", type=float, default=1.0,
+                        help="Merge near-coplanar detailed-mesh faces up to this angle in degrees; 0 disables it.")
     parser.add_argument("--keep-existing", action="store_true", help="Keep an existing COLLISION_GENERATED collection.")
     parser.add_argument("--no-export", action="store_true", help="Only create colliders in the current Blender scene.")
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -567,7 +581,8 @@ def evaluated_scaled_points(obj: bpy.types.Object, scale: Vector) -> list[Vector
         evaluated.to_mesh_clear()
 
 
-def detailed_mesh(name: str, obj: bpy.types.Object, scale: Vector) -> bpy.types.Mesh:
+def detailed_mesh(name: str, obj: bpy.types.Object, scale: Vector,
+                  dissolve_angle_degrees: float) -> bpy.types.Mesh:
     """Copy evaluated source triangles while baking object scale into vertices."""
     evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
     source = evaluated.to_mesh(preserve_all_data_layers=False, depsgraph=bpy.context.evaluated_depsgraph_get())
@@ -593,6 +608,21 @@ def detailed_mesh(name: str, obj: bpy.types.Object, scale: Vector) -> bpy.types.
         mesh = bpy.data.meshes.new(name)
         mesh.from_pydata(points, [], triangles)
         mesh.update()
+        if dissolve_angle_degrees > 0 and len(mesh.polygons) > 8:
+            bm = bmesh.new()
+            bm.from_mesh(mesh)
+            bmesh.ops.dissolve_limit(
+                bm,
+                angle_limit=math.radians(dissolve_angle_degrees),
+                use_dissolve_boundaries=False,
+                verts=list(bm.verts),
+                edges=list(bm.edges),
+                delimit={"NORMAL"},
+            )
+            bmesh.ops.triangulate(bm, faces=list(bm.faces))
+            bm.to_mesh(mesh)
+            bm.free()
+            mesh.update()
         return mesh
     finally:
         evaluated.to_mesh_clear()
@@ -644,7 +674,7 @@ def create_collider(obj: bpy.types.Object, shape: str, reason: str, index: int,
         matrix = Matrix.Translation(translation) @ rotation.to_matrix().to_4x4()
         return mesh_object(
             name,
-            detailed_mesh(f"{name}__mesh", obj, scale),
+            detailed_mesh(f"{name}__mesh", obj, scale, args.mesh_dissolve_angle),
             matrix,
             collection,
             obj,
@@ -711,6 +741,65 @@ def source_bounds_center(sources: Iterable[bpy.types.Object]) -> list[float]:
     minimum = Vector(tuple(min(point[axis] for point in points) for axis in range(3)))
     maximum = Vector(tuple(max(point[axis] for point in points) for axis in range(3)))
     return gltf_point((minimum + maximum) * 0.5)
+
+
+def source_audit_record(source: bpy.types.Object, shape: str, reason: str,
+                        dimensions: Vector, collider: bpy.types.Object | None,
+                        args: argparse.Namespace) -> tuple[dict[str, object], list[dict[str, str]]]:
+    source_name = str(source.get("collision_source_name", source.name))
+    clean_source = clean_name(source_name)
+    hollow_name = any(word in clean_source for word in GAMEPLAY_HOLLOW_WORDS)
+    hollow = hollow_name and (shape != "NONE" or max(dimensions) >= 0.75)
+    record: dict[str, object] = {
+        "source": source_name,
+        "shape": shape.lower(),
+        "reason": reason,
+        "dimensions": [round(value, 5) for value in dimensions],
+    }
+    warnings: list[dict[str, str]] = []
+    if hollow:
+        record["expectedHollow"] = True
+        if shape in {"BOX", "CYLINDER", "CONVEX"}:
+            warnings.append({
+                "severity": "error",
+                "source": source_name,
+                "message": f"hollow gameplay object was sealed by {shape.lower()} collision",
+            })
+        elif shape == "NONE" and reason not in {"too small", "architectural fragment too small"}:
+            warnings.append({
+                "severity": "error",
+                "source": source_name,
+                "message": f"hollow gameplay object has no collision ({reason})",
+            })
+    if shape == "MESH" and collider is not None:
+        collider.data.calc_loop_triangles()
+        triangle_count = len(collider.data.loop_triangles)
+        record["meshTriangles"] = triangle_count
+        if triangle_count > args.max_mesh_triangles:
+            warnings.append({
+                "severity": "warning",
+                "source": source_name,
+                "message": (f"detailed collider has {triangle_count} triangles; "
+                            f"review against the {args.max_mesh_triangles} triangle budget"),
+            })
+    return record, warnings
+
+
+def write_audit_report(path: Path, source_count: int, counts: dict[str, int],
+                       skipped: dict[str, int], review: list[dict[str, object]],
+                       warnings: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "sourceCount": source_count,
+        "generatedCount": sum(counts.values()),
+        "counts": {key.lower(): value for key, value in counts.items()},
+        "skipped": skipped,
+        "review": review,
+        "warnings": warnings,
+        "errors": sum(1 for warning in warnings if warning["severity"] == "error"),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf8")
+    print(f"[compound-collision] Wrote audit report to {path}")
 
 
 def export_outputs(
@@ -780,6 +869,8 @@ def main() -> None:
     skipped: dict[str, int] = {}
     skipped_examples: dict[str, list[str]] = {}
     counts = {"BOX": 0, "CYLINDER": 0, "CONVEX": 0, "MESH": 0}
+    audit_review: list[dict[str, object]] = []
+    audit_warnings: list[dict[str, str]] = []
 
     for index, source in enumerate(sources, 1):
         _, _, dimensions, _ = base_frame(source)
@@ -789,6 +880,12 @@ def main() -> None:
             examples = skipped_examples.setdefault(reason, [])
             if len(examples) < 8:
                 examples.append(str(source.get("collision_source_name", source.name)))
+            record, warnings = source_audit_record(source, shape, reason, dimensions, None, args)
+            if (record.get("expectedHollow") or warnings
+                    or (reason not in {"decorative name", "architectural fragment too small"}
+                        and max(dimensions) >= 1.0)):
+                audit_review.append(record)
+            audit_warnings.extend(warnings)
             continue
         try:
             collider = create_collider(source, shape, reason, index, root, args)
@@ -798,14 +895,31 @@ def main() -> None:
             examples = skipped_examples.setdefault(failure, [])
             if len(examples) < 8:
                 examples.append(str(source.get("collision_source_name", source.name)))
+            record, warnings = source_audit_record(source, "NONE", failure, dimensions, None, args)
+            audit_review.append(record)
+            audit_warnings.extend(warnings)
             continue
         colliders.append(collider)
         counts[shape] += 1
+        record, warnings = source_audit_record(source, shape, reason, dimensions, collider, args)
+        if record.get("expectedHollow") or shape == "MESH" or warnings:
+            audit_review.append(record)
+        audit_warnings.extend(warnings)
 
     if uses_work_sources:
         remove_collection(WORK_COLLECTION)
     if not args.no_export:
         export_outputs(colliders, args, visual_center)
+    audit_path = args.audit_report
+    if audit_path is None and not args.no_export:
+        if args.manifest:
+            audit_path = args.manifest.with_suffix(".audit.json")
+        elif args.output:
+            audit_path = args.output.with_suffix(".audit.json")
+        elif args.input:
+            audit_path = args.input.with_suffix(".colliders.audit.json")
+    if audit_path:
+        write_audit_report(audit_path.resolve(), len(sources), counts, skipped, audit_review, audit_warnings)
     if args.save_blend:
         args.save_blend.parent.mkdir(parents=True, exist_ok=True)
         bpy.ops.wm.save_as_mainfile(filepath=str(args.save_blend.resolve()))
@@ -815,6 +929,10 @@ def main() -> None:
           f"convex: {counts['CONVEX']}, meshes: {counts['MESH']}")
     print(f"[compound-collision] Skipped: {sum(skipped.values())} {skipped}")
     print(f"[compound-collision] Skip examples: {skipped_examples}")
+    print(f"[compound-collision] Audit warnings: {len(audit_warnings)}")
+    audit_errors = [warning for warning in audit_warnings if warning["severity"] == "error"]
+    if args.strict_audit and audit_errors:
+        raise RuntimeError(f"collision audit failed with {len(audit_errors)} error(s): {audit_errors[:8]}")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,360 @@
+{
+  "sourceCount": 4788,
+  "generatedCount": 446,
+  "counts": {
+    "box": 326,
+    "cylinder": 14,
+    "convex": 79,
+    "mesh": 27
+  },
+  "skipped": {
+    "too small": 521,
+    "decorative name": 3517,
+    "architectural fragment too small": 304
+  },
+  "review": [
+    {
+      "source": "cabinet_upper_opened__part_0001",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        3.04168,
+        1.34969,
+        2.30886
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 162
+    },
+    {
+      "source": "cabinet_upper_opened__part_0002",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.32729,
+        0.36712,
+        2.03069
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 76
+    },
+    {
+      "source": "box_cardboard_medium_opened_TB",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.00068,
+        1.1965,
+        0.54988
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 686
+    },
+    {
+      "source": "Box_weapon_opened__part_0001",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        2.48478,
+        1.3321,
+        1.1149
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 4206
+    },
+    {
+      "source": "box_cardboard_medium_opened_tomato__part_0001",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.00413,
+        0.60581,
+        0.58056
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 47
+    },
+    {
+      "source": "box_cardboard_medium_opened_tomato__part_0002",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.20653,
+        0.22988,
+        0.27147
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 44
+    },
+    {
+      "source": "box_cardboard_medium_opened_tomato__part_0003",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.22757,
+        0.20442,
+        0.27147
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 44
+    },
+    {
+      "source": "box_cardboard_medium_opened_tomato__part_0004",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.43621,
+        0.47291,
+        0.27147
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 132
+    },
+    {
+      "source": "box_cardboard_medium_opened_tomato__part_0005",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.22757,
+        0.20442,
+        0.27147
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 44
+    },
+    {
+      "source": "box_cardboard_medium_opened_tomato__part_0006",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.22757,
+        0.20442,
+        0.27147
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 44
+    },
+    {
+      "source": "box_cardboard_medium_opened_beanz",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.00356,
+        0.93383,
+        0.62175
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 354
+    },
+    {
+      "source": "box_cardboard_medium_opened_TB.001__part_0001",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.09972,
+        1.01945,
+        0.68628
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 940
+    },
+    {
+      "source": "box_cardboard_medium_opened_TB.001__part_0002",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.28381,
+        0.28381,
+        0.24799
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 128
+    },
+    {
+      "source": "box_cardboard_medium_opened_TB.001__part_0003",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.28381,
+        0.28381,
+        0.24799
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 128
+    },
+    {
+      "source": "Basket_groccery",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        2.17318,
+        1.33423,
+        2.19767
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 2944
+    },
+    {
+      "source": "locker_grey",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        2.90492,
+        1.18739,
+        4.73666
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 108
+    },
+    {
+      "source": "locker_blue",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        2.54272,
+        1.63595,
+        4.05431
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 260
+    },
+    {
+      "source": "locker_brown",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        3.76332,
+        1.92083,
+        4.61016
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 1130
+    },
+    {
+      "source": "tool_shelf_red__part_0001",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.32977,
+        1.98198,
+        2.65722
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 1822
+    },
+    {
+      "source": "tool_shelf_red__part_0002",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.21653,
+        0.39852,
+        0.02861
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 357
+    },
+    {
+      "source": "Basket_trash_big",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.70303,
+        1.76098,
+        1.84213
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 222
+    },
+    {
+      "source": "basket_trash_small.001",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.91107,
+        0.91107,
+        0.73977
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 86
+    },
+    {
+      "source": "basket_trash_small.002",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.91107,
+        0.91107,
+        0.73977
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 86
+    },
+    {
+      "source": "basket_trash_small",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        0.91107,
+        0.91107,
+        0.73977
+      ],
+      "expectedHollow": true,
+      "meshTriangles": 86
+    },
+    {
+      "source": "Toilet",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.28375,
+        2.25745,
+        2.25741
+      ],
+      "meshTriangles": 704
+    },
+    {
+      "source": "Map_city",
+      "shape": "none",
+      "reason": "too small",
+      "dimensions": [
+        4.23872,
+        4.65211,
+        0.0
+      ]
+    },
+    {
+      "source": "Calendar",
+      "shape": "none",
+      "reason": "too small",
+      "dimensions": [
+        1.98427,
+        2.97495,
+        0.0
+      ]
+    },
+    {
+      "source": "Car_wheels__part_0001",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.73257,
+        1.74955,
+        0.6925
+      ],
+      "meshTriangles": 216
+    },
+    {
+      "source": "Car_wheels__part_0002",
+      "shape": "mesh",
+      "reason": "hollow detailed mesh",
+      "dimensions": [
+        1.93767,
+        1.92183,
+        1.88717
+      ],
+      "meshTriangles": 616
+    }
+  ],
+  "warnings": [],
+  "errors": 0
+}

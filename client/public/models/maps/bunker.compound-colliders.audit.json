@@ -1,360 +1,1358 @@
 {
-  "sourceCount": 4788,
-  "generatedCount": 446,
+  "sourceCount": 1591,
+  "generatedCount": 1576,
   "counts": {
-    "box": 326,
-    "cylinder": 14,
-    "convex": 79,
-    "mesh": 27
+    "box": 829,
+    "cylinder": 54,
+    "convex": 599,
+    "mesh": 94
   },
   "skipped": {
-    "too small": 521,
-    "decorative name": 3517,
-    "architectural fragment too small": 304
+    "broad decorative air box removed": 7,
+    "sealed enterable primitive": 52,
+    "replaced by merge manifest": 21
   },
   "review": [
     {
-      "source": "cabinet_upper_opened__part_0001",
+      "source": "bookshelf",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.73 surface, 0.68 boundary)",
+      "dimensions": [
+        1.15448,
+        2.81058,
+        2.61589
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.72848,
+      "boundaryEdgeRatio": 0.68493,
+      "expectedHollow": true,
+      "meshTriangles": 68
+    },
+    {
+      "source": "cabinet_upper",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (0.96 surface, 0.70 boundary)",
       "dimensions": [
         3.04168,
         1.34969,
         2.30886
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 0.95705,
+      "boundaryEdgeRatio": 0.6993,
+      "expectedHollow": true,
+      "meshTriangles": 192
+    },
+    {
+      "source": "cabinet_upper_opened__part_0001",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.61 surface, 0.70 boundary)",
+      "dimensions": [
+        3.04168,
+        1.34969,
+        2.30886
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.61016,
+      "boundaryEdgeRatio": 0.70236,
       "expectedHollow": true,
       "meshTriangles": 162
     },
     {
-      "source": "cabinet_upper_opened__part_0002",
+      "source": "Sofa__part_0001",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.72 surface, 0.78 boundary)",
       "dimensions": [
-        1.32729,
-        0.36712,
-        2.03069
+        6.73924,
+        2.77782,
+        2.76154
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.72063,
+      "boundaryEdgeRatio": 0.7808,
       "expectedHollow": true,
-      "meshTriangles": 76
+      "meshTriangles": 798
+    },
+    {
+      "source": "Wardrobe_cabinet",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.44 surface, 0.74 boundary)",
+      "dimensions": [
+        2.912,
+        2.91497,
+        3.2201
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.44167,
+      "boundaryEdgeRatio": 0.73569,
+      "expectedHollow": true,
+      "meshTriangles": 230
+    },
+    {
+      "source": "Box_ForBattery_AA",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (3.06 surface, 0.78 boundary)",
+      "dimensions": [
+        0.38467,
+        0.38467,
+        0.15085
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 3.06397,
+      "boundaryEdgeRatio": 0.77537,
+      "expectedHollow": true,
+      "meshTriangles": 1348
+    },
+    {
+      "source": "Box_ForBattery_C",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (2.58 surface, 0.78 boundary)",
+      "dimensions": [
+        0.38467,
+        0.38467,
+        0.15085
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 2.57617,
+      "boundaryEdgeRatio": 0.77958,
+      "expectedHollow": true,
+      "meshTriangles": 644
     },
     {
       "source": "box_cardboard_medium_opened_TB",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.13 surface, 0.77 boundary)",
       "dimensions": [
         1.00068,
         1.1965,
         0.54988
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.13436,
+      "boundaryEdgeRatio": 0.76681,
       "expectedHollow": true,
       "meshTriangles": 686
     },
     {
+      "source": "Box_plastic.001",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.22 surface, 0.74 boundary)",
+      "dimensions": [
+        1.56206,
+        0.84956,
+        0.63925
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.22347,
+      "boundaryEdgeRatio": 0.74404,
+      "expectedHollow": true,
+      "meshTriangles": 505
+    },
+    {
+      "source": "Box_weapon.002",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.00 surface, 0.78 boundary)",
+      "dimensions": [
+        2.50382,
+        1.3298,
+        0.45136
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 0.99677,
+      "boundaryEdgeRatio": 0.78195,
+      "expectedHollow": true,
+      "meshTriangles": 108
+    },
+    {
+      "source": "Box_weapon.003",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.07 surface, 0.78 boundary)",
+      "dimensions": [
+        2.44515,
+        1.24187,
+        0.45136
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.07293,
+      "boundaryEdgeRatio": 0.78195,
+      "expectedHollow": true,
+      "meshTriangles": 108
+    },
+    {
+      "source": "Box_weapon.004",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.07 surface, 0.78 boundary)",
+      "dimensions": [
+        2.44515,
+        1.24187,
+        0.45136
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.07293,
+      "boundaryEdgeRatio": 0.78195,
+      "expectedHollow": true,
+      "meshTriangles": 108
+    },
+    {
+      "source": "Box_weapon.005",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.07 surface, 0.78 boundary)",
+      "dimensions": [
+        2.44515,
+        1.24187,
+        0.45136
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.07293,
+      "boundaryEdgeRatio": 0.78195,
+      "expectedHollow": true,
+      "meshTriangles": 108
+    },
+    {
       "source": "Box_weapon_opened__part_0001",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.41 surface, 0.77 boundary)",
       "dimensions": [
         2.48478,
         1.3321,
         1.1149
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.41155,
+      "boundaryEdgeRatio": 0.76537,
       "expectedHollow": true,
       "meshTriangles": 4206
     },
     {
-      "source": "box_cardboard_medium_opened_tomato__part_0001",
-      "shape": "mesh",
-      "reason": "hollow detailed mesh",
-      "dimensions": [
-        1.00413,
-        0.60581,
-        0.58056
-      ],
-      "expectedHollow": true,
-      "meshTriangles": 47
-    },
-    {
-      "source": "box_cardboard_medium_opened_tomato__part_0002",
-      "shape": "mesh",
-      "reason": "hollow detailed mesh",
-      "dimensions": [
-        0.20653,
-        0.22988,
-        0.27147
-      ],
-      "expectedHollow": true,
-      "meshTriangles": 44
-    },
-    {
-      "source": "box_cardboard_medium_opened_tomato__part_0003",
-      "shape": "mesh",
-      "reason": "hollow detailed mesh",
-      "dimensions": [
-        0.22757,
-        0.20442,
-        0.27147
-      ],
-      "expectedHollow": true,
-      "meshTriangles": 44
-    },
-    {
-      "source": "box_cardboard_medium_opened_tomato__part_0004",
-      "shape": "mesh",
-      "reason": "hollow detailed mesh",
-      "dimensions": [
-        0.43621,
-        0.47291,
-        0.27147
-      ],
-      "expectedHollow": true,
-      "meshTriangles": 132
-    },
-    {
-      "source": "box_cardboard_medium_opened_tomato__part_0005",
-      "shape": "mesh",
-      "reason": "hollow detailed mesh",
-      "dimensions": [
-        0.22757,
-        0.20442,
-        0.27147
-      ],
-      "expectedHollow": true,
-      "meshTriangles": 44
-    },
-    {
-      "source": "box_cardboard_medium_opened_tomato__part_0006",
-      "shape": "mesh",
-      "reason": "hollow detailed mesh",
-      "dimensions": [
-        0.22757,
-        0.20442,
-        0.27147
-      ],
-      "expectedHollow": true,
-      "meshTriangles": 44
-    },
-    {
       "source": "box_cardboard_medium_opened_beanz",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.16 surface, 0.78 boundary)",
       "dimensions": [
         1.00356,
         0.93383,
         0.62175
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.16007,
+      "boundaryEdgeRatio": 0.78156,
       "expectedHollow": true,
       "meshTriangles": 354
     },
     {
       "source": "box_cardboard_medium_opened_TB.001__part_0001",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.30 surface, 0.77 boundary)",
       "dimensions": [
         1.09972,
         1.01945,
         0.68628
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.29651,
+      "boundaryEdgeRatio": 0.76918,
       "expectedHollow": true,
       "meshTriangles": 940
     },
     {
       "source": "box_cardboard_medium_opened_TB.001__part_0002",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (0.95 surface, 0.78 boundary)",
       "dimensions": [
         0.28381,
         0.28381,
         0.24799
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 0.95185,
+      "boundaryEdgeRatio": 0.77863,
       "expectedHollow": true,
       "meshTriangles": 128
     },
     {
       "source": "box_cardboard_medium_opened_TB.001__part_0003",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (0.95 surface, 0.78 boundary)",
       "dimensions": [
         0.28381,
         0.28381,
         0.24799
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 0.95185,
+      "boundaryEdgeRatio": 0.77551,
       "expectedHollow": true,
       "meshTriangles": 128
     },
     {
-      "source": "Basket_groccery",
+      "source": "cabinet_medical",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (0.95 surface, 0.69 boundary)",
       "dimensions": [
-        2.17318,
-        1.33423,
-        2.19767
+        1.70607,
+        0.9622,
+        1.66467
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 0.95026,
+      "boundaryEdgeRatio": 0.69461,
       "expectedHollow": true,
-      "meshTriangles": 2944
+      "meshTriangles": 168
     },
     {
       "source": "locker_grey",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.28 surface, 0.69 boundary)",
       "dimensions": [
         2.90492,
         1.18739,
         4.73666
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.27805,
+      "boundaryEdgeRatio": 0.69091,
       "expectedHollow": true,
       "meshTriangles": 108
     },
     {
       "source": "locker_blue",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.84 surface, 0.70 boundary)",
       "dimensions": [
         2.54272,
         1.63595,
         4.05431
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.83531,
+      "boundaryEdgeRatio": 0.69519,
       "expectedHollow": true,
       "meshTriangles": 260
     },
     {
       "source": "locker_brown",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.18 surface, 0.74 boundary)",
       "dimensions": [
         3.76332,
         1.92083,
         4.61016
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.18284,
+      "boundaryEdgeRatio": 0.7401,
       "expectedHollow": true,
       "meshTriangles": 1130
     },
     {
+      "source": "Shelving_double.001",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.20 surface, 0.61 boundary)",
+      "dimensions": [
+        4.26176,
+        0.83572,
+        5.16876
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.20109,
+      "boundaryEdgeRatio": 0.60574,
+      "expectedHollow": true,
+      "meshTriangles": 740
+    },
+    {
+      "source": "Shelving_double.002",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.20 surface, 0.61 boundary)",
+      "dimensions": [
+        4.26177,
+        0.83572,
+        5.16876
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.20225,
+      "boundaryEdgeRatio": 0.60574,
+      "expectedHollow": true,
+      "meshTriangles": 742
+    },
+    {
+      "source": "Shelving_double.003",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.20 surface, 0.61 boundary)",
+      "dimensions": [
+        4.26176,
+        0.83572,
+        5.16876
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.20109,
+      "boundaryEdgeRatio": 0.60574,
+      "expectedHollow": true,
+      "meshTriangles": 736
+    },
+    {
       "source": "tool_shelf_red__part_0001",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.05 surface, 0.76 boundary)",
       "dimensions": [
         1.32977,
         1.98198,
         2.65722
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.05409,
+      "boundaryEdgeRatio": 0.75699,
       "expectedHollow": true,
       "meshTriangles": 1822
     },
     {
-      "source": "tool_shelf_red__part_0002",
-      "shape": "mesh",
-      "reason": "hollow detailed mesh",
-      "dimensions": [
-        0.21653,
-        0.39852,
-        0.02861
-      ],
-      "expectedHollow": true,
-      "meshTriangles": 357
-    },
-    {
       "source": "Basket_trash_big",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.25 surface, 0.77 boundary)",
       "dimensions": [
         1.70303,
         1.76098,
         1.84213
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.25002,
+      "boundaryEdgeRatio": 0.77348,
       "expectedHollow": true,
       "meshTriangles": 222
     },
     {
-      "source": "basket_trash_small.001",
+      "source": "Fridge__part_0001",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (0.97 surface, 0.79 boundary)",
       "dimensions": [
-        0.91107,
-        0.91107,
-        0.73977
+        2.28217,
+        1.93261,
+        4.12165
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 0.96944,
+      "boundaryEdgeRatio": 0.78776,
       "expectedHollow": true,
-      "meshTriangles": 86
+      "meshTriangles": 182
     },
     {
-      "source": "basket_trash_small.002",
+      "source": "Culler",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.07 surface, 0.77 boundary)",
       "dimensions": [
-        0.91107,
-        0.91107,
-        0.73977
+        0.89503,
+        0.89503,
+        2.44133
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.06669,
+      "boundaryEdgeRatio": 0.77072,
       "expectedHollow": true,
-      "meshTriangles": 86
+      "meshTriangles": 760
     },
     {
-      "source": "basket_trash_small",
+      "source": "Switcher",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.12 surface, 0.75 boundary)",
       "dimensions": [
-        0.91107,
-        0.91107,
-        0.73977
+        0.22255,
+        0.08081,
+        0.22255
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.11989,
+      "boundaryEdgeRatio": 0.74894,
       "expectedHollow": true,
-      "meshTriangles": 86
+      "meshTriangles": 98
     },
     {
-      "source": "Toilet",
+      "source": "Switcher.001",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.12 surface, 0.76 boundary)",
       "dimensions": [
-        1.28375,
-        2.25745,
-        2.25741
+        0.22255,
+        0.08081,
+        0.22255
       ],
-      "meshTriangles": 704
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.11989,
+      "boundaryEdgeRatio": 0.75949,
+      "expectedHollow": true,
+      "meshTriangles": 98
     },
     {
-      "source": "Map_city",
-      "shape": "none",
-      "reason": "too small",
-      "dimensions": [
-        4.23872,
-        4.65211,
-        0.0
-      ]
-    },
-    {
-      "source": "Calendar",
-      "shape": "none",
-      "reason": "too small",
-      "dimensions": [
-        1.98427,
-        2.97495,
-        0.0
-      ]
-    },
-    {
-      "source": "Car_wheels__part_0001",
+      "source": "Switcher.002",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.12 surface, 0.77 boundary)",
       "dimensions": [
-        1.73257,
-        1.74955,
-        0.6925
+        0.22255,
+        0.08081,
+        0.22255
       ],
-      "meshTriangles": 216
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.11989,
+      "boundaryEdgeRatio": 0.76987,
+      "expectedHollow": true,
+      "meshTriangles": 98
+    },
+    {
+      "source": "Switcher.003",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.12 surface, 0.72 boundary)",
+      "dimensions": [
+        0.22255,
+        0.08081,
+        0.22255
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.11989,
+      "boundaryEdgeRatio": 0.71616,
+      "expectedHollow": true,
+      "meshTriangles": 98
+    },
+    {
+      "source": "Plates_clean.001",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (2.35 surface, 0.78 boundary)",
+      "dimensions": [
+        0.62571,
+        0.62571,
+        0.09525
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 2.34547,
+      "boundaryEdgeRatio": 0.77876,
+      "expectedHollow": true,
+      "meshTriangles": 368
+    },
+    {
+      "source": "Logs_wood__part_0003",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (2.61 surface, 0.80 boundary)",
+      "dimensions": [
+        3.14997,
+        3.21806,
+        0.36837
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 2.60924,
+      "boundaryEdgeRatio": 0.8,
+      "expectedHollow": true,
+      "meshTriangles": 456
+    },
+    {
+      "source": "Logs_wood__part_0005",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.36 surface, 0.80 boundary)",
+      "dimensions": [
+        1.58568,
+        5.27718,
+        0.2549
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.35985,
+      "boundaryEdgeRatio": 0.8,
+      "expectedHollow": true,
+      "meshTriangles": 96
+    },
+    {
+      "source": "pallet_wood",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.65 surface, 0.80 boundary)",
+      "dimensions": [
+        2.40295,
+        3.10195,
+        0.3818
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.65158,
+      "boundaryEdgeRatio": 0.79607,
+      "expectedHollow": true,
+      "meshTriangles": 328
+    },
+    {
+      "source": "pallet_wood.001",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.15 surface, 0.80 boundary)",
+      "dimensions": [
+        1.1608,
+        2.41424,
+        2.99798
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.1547,
+      "boundaryEdgeRatio": 0.8,
+      "expectedHollow": true,
+      "meshTriangles": 324
+    },
+    {
+      "source": "pallet_wood.002",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.22 surface, 0.80 boundary)",
+      "dimensions": [
+        1.01476,
+        3.13322,
+        2.34295
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.21629,
+      "boundaryEdgeRatio": 0.8,
+      "expectedHollow": true,
+      "meshTriangles": 324
+    },
+    {
+      "source": "pallet_wood.003",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.78 surface, 0.79 boundary)",
+      "dimensions": [
+        2.36275,
+        2.89207,
+        0.36898
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.77867,
+      "boundaryEdgeRatio": 0.79344,
+      "expectedHollow": true,
+      "meshTriangles": 322
+    },
+    {
+      "source": "cigarets__part_0001",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.37 surface, 0.78 boundary)",
+      "dimensions": [
+        0.1838,
+        0.1838,
+        0.0306
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.3662,
+      "boundaryEdgeRatio": 0.78396,
+      "expectedHollow": true,
+      "meshTriangles": 364
+    },
+    {
+      "source": "Workbench.001__part_0001",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.35 surface, 0.79 boundary)",
+      "dimensions": [
+        4.45854,
+        4.23135,
+        3.08614
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.35377,
+      "boundaryEdgeRatio": 0.79183,
+      "expectedHollow": true,
+      "meshTriangles": 9242
     },
     {
       "source": "Car_wheels__part_0002",
       "shape": "mesh",
-      "reason": "hollow detailed mesh",
+      "reason": "auto hollow geometry (1.09 surface, 0.80 boundary)",
       "dimensions": [
         1.93767,
         1.92183,
         1.88717
       ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.08781,
+      "boundaryEdgeRatio": 0.8,
+      "expectedHollow": true,
       "meshTriangles": 616
+    },
+    {
+      "source": "Shelf_elecrto",
+      "shape": "mesh",
+      "reason": "auto hollow geometry (1.46 surface, 0.80 boundary)",
+      "dimensions": [
+        0.44344,
+        1.36043,
+        1.83985
+      ],
+      "autoMeshCandidate": true,
+      "surfaceRatio": 1.46333,
+      "boundaryEdgeRatio": 0.8,
+      "expectedHollow": true,
+      "meshTriangles": 64
     }
   ],
   "warnings": [],
-  "errors": 0
+  "errors": 0,
+  "postProcessRemovedColliders": [
+    {
+      "id": "COL_BOX__lamp_ceiling__0029",
+      "source": "Lamp_ceiling.001",
+      "size": [
+        30.92418,
+        0.879048,
+        31.900136
+      ],
+      "volume": 867.168148
+    },
+    {
+      "id": "COL_BOX__lamp_walls__0030",
+      "source": "Lamp_walls",
+      "size": [
+        39.718112,
+        1.559884,
+        13.664764
+      ],
+      "volume": 846.6093
+    },
+    {
+      "id": "COL_BOX__skirting__0118",
+      "source": "Skirting",
+      "size": [
+        47.000022,
+        4.29296,
+        35.00447
+      ],
+      "volume": 7062.824414
+    },
+    {
+      "id": "COL_BOX__lamp__0627",
+      "source": "Lamp.001",
+      "size": [
+        0.125238,
+        7.63022,
+        0.144612
+      ],
+      "volume": 0.13819
+    },
+    {
+      "id": "COL_BOX__radio__0786",
+      "source": "Radio",
+      "size": [
+        3.457946,
+        0.856682,
+        3.831918
+      ],
+      "volume": 11.351521
+    },
+    {
+      "id": "COL_BOX__vents_part_0001__0025",
+      "source": "Vents__part_0001",
+      "size": [
+        25.403324,
+        40.561696,
+        4.181764
+      ],
+      "volume": 4308.897594
+    },
+    {
+      "id": "COL_BOX__wires__0027",
+      "source": "Wires",
+      "size": [
+        47.739312,
+        5.525484,
+        24.083116
+      ],
+      "volume": 6352.711883
+    },
+    {
+      "id": "COL_CONVEX__cabinet_upper_opened_part_0002__0009",
+      "source": "cabinet_upper_opened__part_0002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__sofa_part_0002__0011",
+      "source": "Sofa__part_0002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__table_wood_darkbrown__0013",
+      "source": "Table_wood_darkbrown",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_part_0001__0014",
+      "source": "Chair_portable__part_0001",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_part_0002__0015",
+      "source": "Chair_portable__part_0002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_part_0003__0016",
+      "source": "Chair_portable__part_0003",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_001_part_0001__0017",
+      "source": "Chair_portable.001__part_0001",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_001_part_0002__0018",
+      "source": "Chair_portable.001__part_0002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_001_part_0003__0019",
+      "source": "Chair_portable.001__part_0003",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_002_part_0001__0020",
+      "source": "Chair_portable.002__part_0001",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_002_part_0002__0021",
+      "source": "Chair_portable.002__part_0002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__chair_portable_002_part_0003__0022",
+      "source": "Chair_portable.002__part_0003",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__stool__0023",
+      "source": "Stool.001",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__table_wood_brown__0024",
+      "source": "Table_wood_brown",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_BOX__lamp_table__0031",
+      "source": "Lamp_table.002",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.692112,
+        0.903392,
+        0.799182
+      ]
+    },
+    {
+      "id": "COL_CYLINDER__toiletbrush__0048",
+      "source": "ToiletBrush",
+      "type": "cylinder",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_weapon_opened_part_0002__0092",
+      "source": "Box_weapon_opened__part_0002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_weapon_opened_part_0003__0093",
+      "source": "Box_weapon_opened__part_0003",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_cardboard_medium_opened_tomato_part_0001__0095",
+      "source": "box_cardboard_medium_opened_tomato__part_0001",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_cardboard_medium_opened_tomato_part_0002__0096",
+      "source": "box_cardboard_medium_opened_tomato__part_0002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_cardboard_medium_opened_tomato_part_0003__0097",
+      "source": "box_cardboard_medium_opened_tomato__part_0003",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_cardboard_medium_opened_tomato_part_0004__0098",
+      "source": "box_cardboard_medium_opened_tomato__part_0004",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_cardboard_medium_opened_tomato_part_0005__0099",
+      "source": "box_cardboard_medium_opened_tomato__part_0005",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__box_cardboard_medium_opened_tomato_part_0006__0100",
+      "source": "box_cardboard_medium_opened_tomato__part_0006",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__basket_groccery__0108",
+      "source": "Basket_groccery",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0001__0649",
+      "source": "Shelving.002__part_0001",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        3.421426,
+        0.10305,
+        1.11263
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0002__0650",
+      "source": "Shelving.002__part_0002",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.19075,
+        4.370808,
+        0.247994
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0003__0651",
+      "source": "Shelving.002__part_0003",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.190748,
+        4.370808,
+        0.247994
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0004__0652",
+      "source": "Shelving.002__part_0004",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.19075,
+        4.370808,
+        0.247994
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0005__0653",
+      "source": "Shelving.002__part_0005",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.190748,
+        4.370808,
+        0.247994
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0006__0654",
+      "source": "Shelving.002__part_0006",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        3.421426,
+        0.10305,
+        1.112628
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0007__0655",
+      "source": "Shelving.002__part_0007",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        3.421426,
+        0.10305,
+        1.112628
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0008__0656",
+      "source": "Shelving.002__part_0008",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        3.421426,
+        0.10305,
+        1.112628
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0009__0657",
+      "source": "Shelving.002__part_0009",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        3.421426,
+        0.10305,
+        1.112628
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_002_part_0010__0658",
+      "source": "Shelving.002__part_0010",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        3.421426,
+        0.10305,
+        1.112628
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0001__0659",
+      "source": "Shelving.001__part_0001",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        1.11263,
+        0.10305,
+        3.421424
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0002__0660",
+      "source": "Shelving.001__part_0002",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.247994,
+        4.370808,
+        0.190748
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0003__0661",
+      "source": "Shelving.001__part_0003",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.247994,
+        4.370808,
+        0.190748
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0004__0662",
+      "source": "Shelving.001__part_0004",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.247994,
+        4.370808,
+        0.190748
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0005__0663",
+      "source": "Shelving.001__part_0005",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.247994,
+        4.370808,
+        0.190748
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0006__0664",
+      "source": "Shelving.001__part_0006",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        1.11263,
+        0.10305,
+        3.421424
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0007__0665",
+      "source": "Shelving.001__part_0007",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        1.11263,
+        0.10305,
+        3.421424
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0008__0666",
+      "source": "Shelving.001__part_0008",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        1.11263,
+        0.10305,
+        3.421424
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0009__0667",
+      "source": "Shelving.001__part_0009",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        1.11263,
+        0.10305,
+        3.421424
+      ]
+    },
+    {
+      "id": "COL_BOX__shelving_001_part_0010__0668",
+      "source": "Shelving.001__part_0010",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        1.11263,
+        0.10305,
+        3.421424
+      ]
+    },
+    {
+      "id": "COL_BOX__tool_shelf_red_part_0002__0673",
+      "source": "tool_shelf_red__part_0002",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.216534,
+        0.028612,
+        0.398522
+      ]
+    },
+    {
+      "id": "COL_CONVEX__basket_trash_small__0688",
+      "source": "basket_trash_small.001",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__basket_trash_small__0689",
+      "source": "basket_trash_small.002",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_BOX__soda_red_opened__0702",
+      "source": "Soda_red_opened",
+      "type": "box",
+      "reason": "sealed enterable primitive",
+      "size": [
+        0.149128,
+        0.279806,
+        0.170582
+      ]
+    },
+    {
+      "id": "COL_CONVEX__basket_trash_small__0706",
+      "source": "basket_trash_small",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__toilet__0794",
+      "source": "Toilet",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__car_wheels_part_0001__1584",
+      "source": "Car_wheels__part_0001",
+      "type": "convex",
+      "reason": "sealed enterable primitive",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__cabinet_upper_opened_part_0001__0008",
+      "source": "cabinet_upper_opened__part_0001",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__sofa_part_0001__0010",
+      "source": "Sofa__part_0001",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__box_cardboard_medium_opened_tb__0058",
+      "source": "box_cardboard_medium_opened_TB",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__box_weapon_opened_part_0001__0091",
+      "source": "Box_weapon_opened__part_0001",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__box_cardboard_medium_opened_beanz__0101",
+      "source": "box_cardboard_medium_opened_beanz",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__box_cardboard_medium_opened_tb_001_part_0001__0102",
+      "source": "box_cardboard_medium_opened_TB.001__part_0001",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__box_cardboard_medium_opened_tb_001_part_0002__0103",
+      "source": "box_cardboard_medium_opened_TB.001__part_0002",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__box_cardboard_medium_opened_tb_001_part_0003__0104",
+      "source": "box_cardboard_medium_opened_TB.001__part_0003",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__shelving_double__0669",
+      "source": "Shelving_double.001",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__shelving_double__0670",
+      "source": "Shelving_double.002",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__shelving_double__0671",
+      "source": "Shelving_double.003",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__tool_shelf_red_part_0001__0672",
+      "source": "tool_shelf_red__part_0001",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__basket_trash_big__0687",
+      "source": "Basket_trash_big",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_MESH__car_wheels_part_0002__1585",
+      "source": "Car_wheels__part_0002",
+      "type": "mesh",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__cabinet_lower_sink__0006",
+      "source": "cabinet_lower_sink",
+      "type": "convex",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__shower_part_0001__0788",
+      "source": "Shower__part_0001",
+      "type": "convex",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_BOX__shower_part_0002__0789",
+      "source": "Shower__part_0002",
+      "type": "box",
+      "reason": "replaced by merge manifest",
+      "size": [
+        0.313334,
+        0.022904,
+        0.361808
+      ]
+    },
+    {
+      "id": "COL_CONVEX__shower_part_0003__0790",
+      "source": "Shower__part_0003",
+      "type": "convex",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__shower_part_0004__0791",
+      "source": "Shower__part_0004",
+      "type": "convex",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__shower_part_0005__0792",
+      "source": "Shower__part_0005",
+      "type": "convex",
+      "reason": "replaced by merge manifest",
+      "size": []
+    },
+    {
+      "id": "COL_CONVEX__sink__0793",
+      "source": "Sink",
+      "type": "convex",
+      "reason": "replaced by merge manifest",
+      "size": []
+    }
+  ]
 }

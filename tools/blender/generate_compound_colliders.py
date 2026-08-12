@@ -28,7 +28,8 @@ from mathutils import Matrix, Quaternion, Vector
 COLLISION_COLLECTION = "COLLISION_GENERATED"
 WORK_COLLECTION = "COLLISION_SOURCE_PARTS"
 
-# Explicit names win over geometric guesses. Add project-specific names here.
+# Explicit names win over geometric guesses for broad categories. Gameplay
+# hollow objects are detected from geometry below instead of a name list.
 SKIP_WORDS = (
     "lamp", "lightbulb", "bulb", "handle", "knob", "plate", "cutlery",
     "spoon", "fork", "knife", "trim", "molding", "skirting", "cable",
@@ -40,7 +41,6 @@ SKIP_WORDS = (
     "bottle", "bottel", "canned", "tin_can", "tincan", "soda", "soup",
     "jar", "cigaret", "pencil", "towel", "vinyl", "respirator", "toiletbrush",
     "fryingpan", "supply", "gramophone",
-    "extinguisher",
 )
 BOX_WORDS = (
     "wall", "floor", "ceiling", "roof", "beam", "table", "desk", "counter",
@@ -63,13 +63,11 @@ DETAILED_CONVEX_WORDS = (
     "sofa", "couch", "chair", "stool", "table", "desk", "toilet", "sink",
     "bathtub", "stair", "ramp", "vehicle", "car_wheel", "box_wood", "crate", "opened",
 )
-# Static concave props whose openings are gameplay space. A box or convex hull
-# mathematically seals these cavities, so keep their evaluated triangles. Keep
-# this list narrow: nearly all level collision should still be cheap primitives.
-HOLLOW_MESH_WORDS = (
-    "tire", "wheel", "toilet", "basket", "locker", "opened", "tool_shelf",
+ENTERABLE_MESH_WORDS = (
+    "basket", "tire", "wheel", "toilet", "chair", "stool", "table", "desk",
+    "sofa", "couch", "locker", "opened", "tool_shelf", "shelving", "bookshelf",
+    "bathtub", "tub", "shower", "sink",
 )
-GAMEPLAY_HOLLOW_WORDS = ("basket", "locker", "opened", "tool_shelf")
 DOOR_WORDS = ("door", "gate")
 ROOM_WORDS = (
     "room", "living", "kitchen", "bedroom", "bathroom", "garage", "hall",
@@ -83,6 +81,18 @@ BLENDER_TO_GLTF = Matrix((
     (0.0, -1.0, 0.0, 0.0),
     (0.0, 0.0, 0.0, 1.0),
 ))
+
+# The player collider is a capsule in-game. These values are intentionally a
+# little smaller than the real capsule so the generator only promotes props
+# whose cavities are plausibly gameplay space, not every decorative groove.
+AUTO_MESH_MIN_SIZE = 0.65
+AUTO_MESH_MIN_MID_SIZE = 0.34
+AUTO_MESH_SURFACE_RATIO = 1.35
+AUTO_MESH_OPEN_EDGE_RATIO = 0.55
+AUTO_MESH_OPEN_SURFACE_RATIO = 0.95
+AUTO_MESH_MIN_POLYGONS = 48
+INCLUDED_DECOR_MAX_BOX_VOLUME = 8.0
+INCLUDED_DECOR_MAX_BOX_SIZE = 6.0
 
 
 def script_arguments() -> argparse.Namespace:
@@ -98,6 +108,10 @@ def script_arguments() -> argparse.Namespace:
                         help="Never turn a larger unclassified object into one giant convex hull.")
     parser.add_argument("--cylinder-sides", type=int, default=12, help="Sides used by generated cylinder preview meshes.")
     parser.add_argument("--include-doors", action="store_true", help="Generate colliders for doors/gates. Off keeps passages open.")
+    parser.add_argument("--include-all", action="store_true",
+                        help="Generate colliders for decorative, tiny, and door objects that are normally skipped.")
+    parser.add_argument("--only-source", action="append", default=[],
+                        help="Only generate colliders whose source or logical parent name contains this cleaned text.")
     parser.add_argument("--split-loose", action="store_true", help="Split copied meshes into disconnected parts before classifying.")
     parser.add_argument("--no-group-materials", action="store_true",
                         help="Do not merge sibling material meshes under their logical parent object.")
@@ -118,6 +132,31 @@ def script_arguments() -> argparse.Namespace:
 def clean_name(value: str) -> str:
     value = re.sub(r"\.\d{3}$", "", value).strip().lower()
     return re.sub(r"[^a-z0-9]+", "_", value).strip("_") or "object"
+
+
+def name_matches(name: str, words: Iterable[str]) -> bool:
+    tokens = set(name.split("_"))
+    for word in words:
+        cleaned = clean_name(word)
+        if "_" in cleaned:
+            if cleaned in name:
+                return True
+        elif cleaned in tokens:
+            return True
+    return False
+
+
+def source_matches_filter(obj: bpy.types.Object, patterns: Iterable[str]) -> bool:
+    cleaned_patterns = [clean_name(pattern) for pattern in patterns if clean_name(pattern)]
+    if not cleaned_patterns:
+        return True
+    names = [clean_name(obj.name)]
+    if obj.parent:
+        names.append(clean_name(obj.parent.name))
+    source_name = obj.get("collision_source_name")
+    if source_name:
+        names.append(clean_name(str(source_name)))
+    return any(pattern in name for pattern in cleaned_patterns for name in names)
 
 
 def remove_collection(name: str) -> None:
@@ -188,7 +227,7 @@ def split_loose_copies(sources: Iterable[bpy.types.Object]) -> list[bpy.types.Ob
     return parts
 
 
-def group_material_sources(sources: Iterable[bpy.types.Object]) -> list[bpy.types.Object]:
+def group_material_sources(sources: Iterable[bpy.types.Object], args: argparse.Namespace) -> list[bpy.types.Object]:
     """Bake sibling material primitives into one temporary logical source.
 
     glTF commonly imports one Blender mesh per material. Their shared parent is
@@ -209,7 +248,7 @@ def group_material_sources(sources: Iterable[bpy.types.Object]) -> list[bpy.type
         frame = logical.matrix_world.copy()
         inverse_frame = frame.inverted_safe()
         logical_name = clean_name(logical.name)
-        if any(word in logical_name for word in ("wall", "floor", "ceiling", "roof")):
+        if name_matches(logical_name, ("wall", "floor", "ceiling", "roof")):
             part_index = 0
             for member in members:
                 evaluated = member.evaluated_get(depsgraph)
@@ -227,6 +266,7 @@ def group_material_sources(sources: Iterable[bpy.types.Object]) -> list[bpy.type
                             component_faces,
                             room_name(member),
                             logical.get("collision_shape"),
+                            args.include_all,
                             architecture=True
                         )
                         proxies.append(proxy)
@@ -255,7 +295,7 @@ def group_material_sources(sources: Iterable[bpy.types.Object]) -> list[bpy.type
         for part_index, (points, faces) in enumerate(clusters, 1):
             part_name = logical.name if len(clusters) == 1 else f"{logical.name}__part_{part_index:04d}"
             proxy = make_source_proxy(
-                work, part_name, frame, points, faces, room_name(members[0]), override
+                work, part_name, frame, points, faces, room_name(members[0]), override, args.include_all
             )
             proxies.append(proxy)
     return proxies
@@ -263,10 +303,13 @@ def group_material_sources(sources: Iterable[bpy.types.Object]) -> list[bpy.type
 
 def make_source_proxy(collection: bpy.types.Collection, name: str, frame: Matrix,
                       points: list[Vector], faces: list[tuple[int, int, int]], room: str,
-                      override: object | None, architecture: bool = False) -> bpy.types.Object:
-    mesh = bpy.data.meshes.new(f"COL_SOURCE__{clean_name(name)}")
-    preserve_faces = any(word in clean_name(name) for word in HOLLOW_MESH_WORDS) \
+                      override: object | None, include_all: bool,
+                      architecture: bool = False) -> bpy.types.Object:
+    metrics = collision_geometry_metrics(name, points, faces, architecture, include_all)
+    preserve_faces = bool(metrics.get("collision_auto_mesh")) \
+        or name_matches(clean_name(name), ENTERABLE_MESH_WORDS) \
         or str(override).strip().upper() == "MESH"
+    mesh = bpy.data.meshes.new(f"COL_SOURCE__{clean_name(name)}")
     mesh.from_pydata(points, [], faces if preserve_faces else [])
     mesh.update()
     proxy = bpy.data.objects.new(name, mesh)
@@ -276,9 +319,76 @@ def make_source_proxy(collection: bpy.types.Collection, name: str, frame: Matrix
     proxy["collision_polygon_count"] = len(faces)
     proxy["collision_room"] = room
     proxy["collision_architecture"] = architecture
+    for key, value in metrics.items():
+        proxy[key] = value
     if override is not None:
         proxy["collision_shape"] = override
     return proxy
+
+
+def collision_geometry_metrics(name: str, points: list[Vector], faces: list[tuple[int, int, int]],
+                               architecture: bool, include_all: bool) -> dict[str, object]:
+    metrics: dict[str, object] = {
+        "collision_auto_mesh": False,
+        "collision_surface_ratio": 1.0,
+        "collision_boundary_edge_ratio": 0.0,
+    }
+    clean_source = clean_name(name)
+    if (
+        architecture
+        or (name_matches(clean_source, SKIP_WORDS) and not name_matches(clean_source, ENTERABLE_MESH_WORDS))
+        or name_matches(clean_source, CYLINDER_WORDS)
+    ):
+        return metrics
+    if len(points) < 4 or len(faces) < AUTO_MESH_MIN_POLYGONS:
+        return metrics
+
+    minimum = Vector(tuple(min(point[axis] for point in points) for axis in range(3)))
+    maximum = Vector(tuple(max(point[axis] for point in points) for axis in range(3)))
+    dimensions = maximum - minimum
+    ordered = sorted(abs(value) for value in dimensions)
+    if ordered[2] < AUTO_MESH_MIN_SIZE or ordered[1] < AUTO_MESH_MIN_MID_SIZE:
+        return metrics
+
+    boundary_ratio = boundary_edge_ratio(faces)
+    metrics["collision_boundary_edge_ratio"] = round(boundary_ratio, 5)
+
+    surface_ratio = source_surface_area(points, faces) / max(bounding_surface_area(dimensions), 1e-7)
+    metrics["collision_surface_ratio"] = round(surface_ratio, 5)
+
+    concave_shell = surface_ratio > AUTO_MESH_SURFACE_RATIO
+    open_shell = (
+        boundary_ratio > AUTO_MESH_OPEN_EDGE_RATIO
+        and surface_ratio > AUTO_MESH_OPEN_SURFACE_RATIO
+        and len(faces) >= AUTO_MESH_MIN_POLYGONS * 2
+    )
+    if concave_shell or open_shell:
+        metrics["collision_auto_mesh"] = True
+    return metrics
+
+
+def boundary_edge_ratio(faces: list[tuple[int, int, int]]) -> float:
+    edge_counts: dict[tuple[int, int], int] = {}
+    for face in faces:
+        for first, second in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+            edge = (first, second) if first < second else (second, first)
+            edge_counts[edge] = edge_counts.get(edge, 0) + 1
+    if not edge_counts:
+        return 0.0
+    boundary_edges = sum(1 for count in edge_counts.values() if count == 1)
+    return boundary_edges / len(edge_counts)
+
+
+def source_surface_area(points: list[Vector], faces: list[tuple[int, int, int]]) -> float:
+    area = 0.0
+    for first, second, third in faces:
+        area += ((points[second] - points[first]).cross(points[third] - points[first])).length * 0.5
+    return area
+
+
+def bounding_surface_area(dimensions: Vector) -> float:
+    x, y, z = (abs(dimensions.x), abs(dimensions.y), abs(dimensions.z))
+    return 2.0 * ((x * y) + (x * z) + (y * z))
 
 
 def connected_mesh_components(mesh: bpy.types.Mesh) -> list[tuple[list[Vector], list[tuple[int, int, int]]]]:
@@ -401,7 +511,7 @@ def room_name(obj: bpy.types.Object) -> str:
     current: bpy.types.Object | None = obj
     while current:
         name = clean_name(current.name)
-        if any(word in name for word in ROOM_WORDS):
+        if name_matches(name, ROOM_WORDS):
             return name
         current = current.parent
     for collection in obj.users_collection:
@@ -416,30 +526,41 @@ def classify(obj: bpy.types.Object, dimensions: Vector, args: argparse.Namespace
     if override in {"NONE", "BOX", "CYLINDER", "CONVEX", "MESH"}:
         return override, "custom property"
     name = clean_name(str(obj.get("collision_source_name", obj.name)))
-    if "bookshelf" in name:
-        return "BOX", "box name"
-    if any(word in name for word in SKIP_WORDS):
+    if not args.include_all and name_matches(name, SKIP_WORDS):
         return "NONE", "decorative name"
-    if not args.include_doors and any(word in name for word in DOOR_WORDS):
+    if not args.include_all and not args.include_doors and name_matches(name, DOOR_WORDS):
         return "NONE", "open doorway"
     largest = max(dimensions)
     volume = dimensions.x * dimensions.y * dimensions.z
     if obj.get("collision_architecture"):
         ordered = sorted(dimensions)
-        if largest < 0.5 or ordered[1] < max(args.min_size, 0.18):
+        if not args.include_all and (largest < 0.5 or ordered[1] < max(args.min_size, 0.18)):
             return "NONE", "architectural fragment too small"
         return "BOX", "architectural surface"
-    if largest < args.min_size or volume < args.min_volume:
+    if not args.include_all and (largest < args.min_size or volume < args.min_volume):
         return "NONE", "too small"
-    if any(word in name for word in HOLLOW_MESH_WORDS):
-        return "MESH", "hollow detailed mesh"
-    if any(word in name for word in DETAILED_CONVEX_WORDS):
-        return "CONVEX", "detailed silhouette"
-    if any(word in name for word in BOX_WORDS):
-        return "BOX", "box name"
-    if any(word in name for word in CYLINDER_WORDS):
+    if args.include_all and name_matches(name, SKIP_WORDS):
+        ordered = sorted(dimensions)
+        if ordered[0] / max(ordered[2], 1e-9) <= 0.1:
+            return "BOX", "included decorative thin shape"
+        if ordered[2] / max(ordered[1], 1e-9) >= 2.2 and ordered[0] / max(ordered[1], 1e-9) >= 0.72:
+            return "CYLINDER", "included decorative cylinder"
+        return "BOX", "included decorative box"
+    if name_matches(name, CYLINDER_WORDS):
         return "CYLINDER", "cylinder name"
-    if any(word in name for word in CONVEX_WORDS):
+    if name_matches(name, ENTERABLE_MESH_WORDS):
+        return "MESH", "enterable gameplay mesh"
+    if bool(obj.get("collision_auto_mesh")):
+        ratio = float(obj.get("collision_surface_ratio", 1.0))
+        boundary = float(obj.get("collision_boundary_edge_ratio", 0.0))
+        return "MESH", f"auto hollow geometry ({ratio:.2f} surface, {boundary:.2f} boundary)"
+    if "bookshelf" in name:
+        return "BOX", "box name"
+    if name_matches(name, DETAILED_CONVEX_WORDS):
+        return "CONVEX", "detailed silhouette"
+    if name_matches(name, BOX_WORDS):
+        return "BOX", "box name"
+    if name_matches(name, CONVEX_WORDS):
         return "CONVEX", "irregular name"
     ordered = sorted(dimensions)
     if ordered[0] / max(ordered[2], 1e-9) <= 0.1:
@@ -450,6 +571,8 @@ def classify(obj: bpy.types.Object, dimensions: Vector, args: argparse.Namespace
     if polygons <= 24:
         return "BOX", "simple shape"
     if largest > args.max_convex_size:
+        if args.include_all:
+            return "BOX", "large fallback box"
         return "NONE", "merged structure (use named objects or --split-loose)"
     return "CONVEX", "irregular shape"
 
@@ -747,15 +870,25 @@ def source_audit_record(source: bpy.types.Object, shape: str, reason: str,
                         dimensions: Vector, collider: bpy.types.Object | None,
                         args: argparse.Namespace) -> tuple[dict[str, object], list[dict[str, str]]]:
     source_name = str(source.get("collision_source_name", source.name))
-    clean_source = clean_name(source_name)
-    hollow_name = any(word in clean_source for word in GAMEPLAY_HOLLOW_WORDS)
-    hollow = hollow_name and (shape != "NONE" or max(dimensions) >= 0.75)
+    auto_mesh_candidate = bool(source.get("collision_auto_mesh"))
+    intentionally_simple = reason in {
+        "custom property",
+        "decorative name",
+        "cylinder name",
+        "too small",
+        "architectural fragment too small",
+    }
+    hollow = auto_mesh_candidate and not intentionally_simple and (shape != "NONE" or max(dimensions) >= 0.75)
     record: dict[str, object] = {
         "source": source_name,
         "shape": shape.lower(),
         "reason": reason,
         "dimensions": [round(value, 5) for value in dimensions],
     }
+    if auto_mesh_candidate:
+        record["autoMeshCandidate"] = True
+        record["surfaceRatio"] = float(source.get("collision_surface_ratio", 1.0))
+        record["boundaryEdgeRatio"] = float(source.get("collision_boundary_edge_ratio", 0.0))
     warnings: list[dict[str, str]] = []
     if hollow:
         record["expectedHollow"] = True
@@ -781,6 +914,17 @@ def source_audit_record(source: bpy.types.Object, shape: str, reason: str,
                 "source": source_name,
                 "message": (f"detailed collider has {triangle_count} triangles; "
                             f"review against the {args.max_mesh_triangles} triangle budget"),
+            })
+    if reason.startswith("included decorative") and shape == "BOX":
+        volume = dimensions.x * dimensions.y * dimensions.z
+        if max(dimensions) > INCLUDED_DECOR_MAX_BOX_SIZE or volume > INCLUDED_DECOR_MAX_BOX_VOLUME:
+            warnings.append({
+                "severity": "error",
+                "source": source_name,
+                "message": (
+                    "included decorative object generated a broad box collider "
+                    f"({[round(value, 3) for value in dimensions]}); split it or use a narrower shape"
+                ),
             })
     return record, warnings
 
@@ -856,14 +1000,17 @@ def main() -> None:
 
     original_sources = source_meshes()
     visual_center = source_bounds_center(original_sources)
+    filtered_sources = [source for source in original_sources if source_matches_filter(source, args.only_source)]
+    if args.only_source:
+        print(f"[compound-collision] Source filter kept {len(filtered_sources)}/{len(original_sources)} visual meshes")
     if args.split_loose:
-        sources = split_loose_copies(original_sources)
+        sources = split_loose_copies(filtered_sources)
         uses_work_sources = True
     elif not args.no_group_materials:
-        sources = group_material_sources(original_sources)
+        sources = group_material_sources(filtered_sources, args)
         uses_work_sources = True
     else:
-        sources = original_sources
+        sources = filtered_sources
         uses_work_sources = False
     colliders: list[bpy.types.Object] = []
     skipped: dict[str, int] = {}
@@ -873,6 +1020,8 @@ def main() -> None:
     audit_warnings: list[dict[str, str]] = []
 
     for index, source in enumerate(sources, 1):
+        if index == 1 or index % 500 == 0:
+            print(f"[compound-collision] Processing source {index}/{len(sources)}")
         _, _, dimensions, _ = base_frame(source)
         shape, reason = classify(source, dimensions, args)
         if shape == "NONE":

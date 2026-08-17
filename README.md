@@ -67,6 +67,7 @@ Join tickets expire after 30 seconds and can only be consumed once. Unknown game
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm lint
 ```
 
 ### Blender compound collision tool
